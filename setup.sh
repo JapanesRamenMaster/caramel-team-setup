@@ -165,7 +165,7 @@ if echo "$RESULT" | grep -q '"test": 1'; then
     echo "DB 연결 성공!"
 else
     echo "DB 연결 실패: $RESULT"
-    echo "CPO에게 문의하세요."
+    echo "맹주성에게 문의하세요."
     exit 1
 fi
 
@@ -186,5 +186,12 @@ echo "  작업 폴더: $WORK_DIR"
 echo "  역할: ${ROLE_NAME}팀"
 echo "  스킬: /feedback"
 echo ""
-echo "  VSCode에서 $WORK_DIR 폴더를 열고 Claude 확장을 사용하세요."
+
+# VSCode에서 자동으로 폴더 열기
+if command -v code &> /dev/null; then
+    echo "VSCode에서 $WORK_DIR 폴더를 엽니다..."
+    code "$WORK_DIR"
+else
+    echo "  VSCode에서 $WORK_DIR 폴더를 열어주세요."
+fi
 echo ""
