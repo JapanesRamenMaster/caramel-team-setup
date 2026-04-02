@@ -6,6 +6,59 @@
 
 set -e
 
+# --quiet 모드 (update.sh에서 호출 시 출력 억제)
+QUIET=false
+for arg in "$@"; do
+    [ "$arg" = "--quiet" ] && QUIET=true
+done
+
+# 0. 레포를 ~/.caramel-team-setup/에 설치 (자동 업데이트를 위한 고정 위치)
+INSTALL_DIR="$HOME/.caramel-team-setup"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+    # 다른 위치에서 실행됨 → 고정 위치로 복사/클론
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        # 이미 설치되어 있으면 pull
+        git -C "$INSTALL_DIR" pull --ff-only 2>/dev/null || true
+    elif [ -d "$SCRIPT_DIR/.git" ]; then
+        # git 레포면 clone
+        REMOTE_URL=$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || echo "")
+        if [ -n "$REMOTE_URL" ]; then
+            rm -rf "$INSTALL_DIR"
+            git clone "$REMOTE_URL" "$INSTALL_DIR"
+        else
+            # remote 없으면 복사
+            rm -rf "$INSTALL_DIR"
+            cp -R "$SCRIPT_DIR" "$INSTALL_DIR"
+        fi
+    else
+        # git 레포가 아니면 복사
+        rm -rf "$INSTALL_DIR"
+        cp -R "$SCRIPT_DIR" "$INSTALL_DIR"
+    fi
+    # 고정 위치에서 다시 실행 (인자 전달)
+    exec "$INSTALL_DIR/setup.sh" "$@"
+fi
+
+# --quiet 모드: 심링크만 갱신하고 종료 (update.sh에서 호출)
+if [ "$QUIET" = true ]; then
+    SKILLS_DIR="$HOME/.claude/skills"
+    mkdir -p "$SKILLS_DIR"
+    for skill_dir in "$INSTALL_DIR/skills"/*/; do
+        [ -d "$skill_dir" ] || continue
+        skill_name=$(basename "$skill_dir")
+        ln -sfn "$skill_dir" "$SKILLS_DIR/$skill_name"
+    done
+    # 참조 문서 업데이트
+    WORK_DIR="$HOME/caramel-claude"
+    if [ -d "$WORK_DIR" ]; then
+        cp "$INSTALL_DIR/QUERY_REFERENCE.md" "$WORK_DIR/" 2>/dev/null || true
+        cp "$INSTALL_DIR/DB_SCHEMA.md" "$WORK_DIR/" 2>/dev/null || true
+    fi
+    exit 0
+fi
+
 echo ""
 echo "=== Caramel Claude 팀 환경 셋업 ==="
 echo ""
@@ -21,6 +74,7 @@ while [ $# -gt 0 ]; do
         --role) ROLE="$2"; shift 2 ;;
         --db-host) ARG_DB_HOST="$2"; shift 2 ;;
         --db-password) ARG_DB_PASSWORD="$2"; shift 2 ;;
+        --quiet) shift ;;  # 이미 위에서 처리됨
         *) echo "WARNING: 알 수 없는 인자 '$1'"; shift ;;
     esac
 done
