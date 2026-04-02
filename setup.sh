@@ -131,14 +131,58 @@ echo ".mcp.json 생성 완료"
 cp "$SCRIPT_DIR/QUERY_REFERENCE.md" "$WORK_DIR/" 2>/dev/null || echo "QUERY_REFERENCE.md 없음 (나중에 복사)"
 cp "$SCRIPT_DIR/DB_SCHEMA.md" "$WORK_DIR/" 2>/dev/null || echo "DB_SCHEMA.md 없음 (나중에 복사)"
 
-# 8. Skills 설치
+# 8. Skills 설치 (심링크 방식 — 자동 업데이트 지원)
 SKILLS_DIR="$HOME/.claude/skills"
 mkdir -p "$SKILLS_DIR"
 
-if [ -d "$SCRIPT_DIR/skills/feedback" ]; then
-    mkdir -p "$SKILLS_DIR/feedback"
-    cp "$SCRIPT_DIR/skills/feedback/SKILL.md" "$SKILLS_DIR/feedback/SKILL.md"
-    echo "/feedback 스킬 설치 완료"
+INSTALLED_SKILLS=""
+for skill_dir in "$SCRIPT_DIR/skills"/*/; do
+    [ -d "$skill_dir" ] || continue
+    skill_name=$(basename "$skill_dir")
+    ln -sfn "$skill_dir" "$SKILLS_DIR/$skill_name"
+    INSTALLED_SKILLS="$INSTALLED_SKILLS /$skill_name"
+done
+echo "스킬 설치 완료 (심링크):$INSTALLED_SKILLS"
+
+# 8-1. Claude Code 세션 훅 등록 (자동 업데이트)
+SETTINGS_FILE="$HOME/.claude/settings.json"
+HOOK_CMD="$HOME/.caramel-team-setup/update.sh 2>/dev/null || true"
+
+if [ -f "$SETTINGS_FILE" ]; then
+    # settings.json이 이미 있으면 hooks 추가 (jq 사용)
+    if command -v jq &> /dev/null; then
+        if ! jq -e '.hooks.SessionStart' "$SETTINGS_FILE" &>/dev/null; then
+            # SessionStart 훅이 없으면 추가
+            jq --arg cmd "$HOOK_CMD" '.hooks.SessionStart = [{"type": "command", "command": $cmd}]' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+            echo "Claude Code 세션 훅 등록 완료 (자동 업데이트)"
+        elif ! jq -e --arg cmd "$HOOK_CMD" '.hooks.SessionStart[] | select(.command == $cmd)' "$SETTINGS_FILE" &>/dev/null; then
+            # SessionStart 훅은 있지만 우리 훅이 없으면 추가
+            jq --arg cmd "$HOOK_CMD" '.hooks.SessionStart += [{"type": "command", "command": $cmd}]' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+            echo "Claude Code 세션 훅 추가 완료 (자동 업데이트)"
+        else
+            echo "Claude Code 세션 훅 이미 등록됨"
+        fi
+    else
+        echo "WARNING: jq가 없어서 세션 훅을 자동 등록할 수 없습니다."
+        echo "  수동으로 ~/.claude/settings.json에 추가하세요:"
+        echo "  \"hooks\": { \"SessionStart\": [{ \"type\": \"command\", \"command\": \"$HOOK_CMD\" }] }"
+    fi
+else
+    # settings.json이 없으면 새로 생성
+    mkdir -p "$HOME/.claude"
+    cat > "$SETTINGS_FILE" << HOOKEOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "$HOOK_CMD"
+      }
+    ]
+  }
+}
+HOOKEOF
+    echo "Claude Code 세션 훅 등록 완료 (자동 업데이트)"
 fi
 
 # 9. Node.js 확인 및 mysql2 설치
@@ -184,7 +228,8 @@ echo "=== 셋업 완료 ==="
 echo ""
 echo "  작업 폴더: $WORK_DIR"
 echo "  역할: ${ROLE_NAME}팀"
-echo "  스킬: /feedback"
+echo "  스킬:$INSTALLED_SKILLS"
+echo "  자동 업데이트: 매 세션 시작 시 최신 버전 반영"
 echo ""
 
 # VSCode에서 자동으로 폴더 열기
