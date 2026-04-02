@@ -127,23 +127,18 @@ echo "CLAUDE.md 생성 완료 (공통 + ${ROLE_NAME}팀 규칙)"
 DB_PORT=3306
 DB_USER="caramel_reader"
 DB_NAME="caramel-prod"
+DB_HOST="34.64.113.107"
 
-# --db-host, --db-password 인자가 있으면 사용, 없으면 프롬프트
-if [ -n "$ARG_DB_HOST" ]; then
-    DB_HOST="$ARG_DB_HOST"
-else
-    read -p "DB Host (슬랙에서 확인): " DB_HOST
-fi
-
+# --db-password 인자가 있으면 사용, 없으면 프롬프트
 if [ -n "$ARG_DB_PASSWORD" ]; then
     DB_PASSWORD="$ARG_DB_PASSWORD"
 else
-    read -sp "DB Password (슬랙에서 확인): " DB_PASSWORD
+    read -sp "DB Password (슬랙 #claude-setup 채널에서 확인): " DB_PASSWORD
     echo ""
 fi
 
-if [ -z "$DB_HOST" ] || [ -z "$DB_PASSWORD" ]; then
-    echo "ERROR: DB Host와 Password가 필요합니다. 슬랙 #claude-setup 채널을 확인하세요."
+if [ -z "$DB_PASSWORD" ]; then
+    echo "ERROR: DB Password가 필요합니다. 슬랙 #claude-setup 채널을 확인하세요."
     exit 1
 fi
 
@@ -254,6 +249,15 @@ cd "$WORK_DIR"
 npm init -y --silent 2>/dev/null
 npm install mysql2 --silent
 echo "mysql2 설치 완료"
+
+# Google Sheets MCP (패치 버전) 설치
+SHEETS_DIR="$WORK_DIR/.tools/mcp-google-sheets"
+mkdir -p "$SHEETS_DIR"
+cp -r "$SCRIPT_DIR/tools/mcp-google-sheets/." "$SHEETS_DIR/"
+cd "$SHEETS_DIR"
+npm install --silent
+cd "$WORK_DIR"
+echo "Google Sheets MCP 설치 완료"
 
 # 10. DB 연결 테스트
 echo ""
