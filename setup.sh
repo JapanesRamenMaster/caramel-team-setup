@@ -304,7 +304,7 @@ echo "Google Sheets MCP 설치 완료"
 
 # 10. 설정 저장 (update.sh 마이그레이션용)
 cat > "$WORK_DIR/.setup-config" << CONFIGEOF
-SETUP_VERSION=2
+SETUP_VERSION=3
 ROLE=$ROLE
 CONFIGEOF
 echo "설정 저장 완료 (.setup-config)"

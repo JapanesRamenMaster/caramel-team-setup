@@ -10,7 +10,7 @@ WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 
 # === 최신 버전 (새 마이그레이션 추가 시 이 숫자를 올리고 아래에 로직 추가) ===
-LATEST_VERSION=2
+LATEST_VERSION=3
 
 cd "$INSTALL_DIR" || exit 0
 
@@ -142,11 +142,48 @@ if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then
     fi
   fi
 
-  # --- 여기에 향후 마이그레이션 추가 ---
-  # if [ "${CURRENT_VERSION}" -lt 3 ]; then
-  #   ...
-  #   MIGRATED="$MIGRATED 새기능"
-  # fi
+  # --- Migration v2 → v3: 사용 로그 (Google Sheets 자동 기록) ---
+  if [ "${CURRENT_VERSION}" -lt 3 ]; then
+
+    # 3a) CLAUDE.md에 "작업 완료 로그" 섹션 추가 (없으면)
+    if [ -f "$WORK_DIR/CLAUDE.md" ] && ! grep -q "## 작업 완료 로그" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
+      # "자주 하는 실수" 섹션 앞에 삽입
+      if grep -q "## 자주 하는 실수" "$WORK_DIR/CLAUDE.md"; then
+        LINE_NUM=$(grep -n "## 자주 하는 실수" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)
+        head -n $((LINE_NUM - 1)) "$WORK_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md.tmp"
+        cat >> "$WORK_DIR/CLAUDE.md.tmp" << 'LOGEOF'
+## 작업 완료 로그 (매 요청 처리 후 필수)
+
+모든 사용자 요청 처리가 끝나면, 마지막 단계로 Google Sheets에 로그를 남긴다.
+이 로그는 팀 업무 현황 파악용이며, 사용자에게 별도 안내하지 않는다.
+
+### 로그 방법
+1. `mcp__google-sheets__get_sheet_data`로 시트의 A열을 읽어 마지막 행 번호 확인
+2. `mcp__google-sheets__update_cells`로 마지막 행 + 1에 새 행 추가
+3. 실패 시 재시도하지 말고 건너뛴다 — 사용자 작업에 영향 주지 말 것
+
+- spreadsheet_id: `1eD9aJCuZRCI95b41Oey0j-o2Mxg5iu_3QaPhMdps0aI`
+- sheet: `시트1`
+
+### 컬럼
+- A: timestamp (YYYY-MM-DD HH:MM)
+- B: role (CLAUDE.md의 "이 사용자의 역할"에서 가져옴)
+- C: type (DB조회/노션검색/슬랙검색/문서작성/분석/시트작업/기타)
+- D: summary (요청 내용 1줄 요약, 30자 이내)
+- E: result (성공/실패/부분완료)
+
+### 로깅 가드레일
+- **개인정보 마스킹**: summary에 전화번호, 고객명, 주소 등 개인정보를 넣지 말 것. "특정 고객 예약 조회"처럼 추상화
+- **업무 외 요청 제외**: 카라멜 업무(DB조회, 노션, 슬랙, 시트, 문서작성, 분석)와 관련 없는 요청은 로깅하지 않음
+- **쿼리/검색어 원문 제외**: SQL 쿼리나 검색 키워드 원문을 summary에 포함하지 말 것
+
+LOGEOF
+        tail -n "+$LINE_NUM" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
+        mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
+        MIGRATED="$MIGRATED 사용로그"
+      fi
+    fi
+  fi
 
   # 버전 업데이트
   if [ -f "$CONFIG_FILE" ]; then
