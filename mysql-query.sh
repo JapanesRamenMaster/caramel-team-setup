@@ -15,7 +15,8 @@ if [ -z "$DB_HOST" ] || [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_
 fi
 
 # === 가드레일: SELECT/SHOW/DESCRIBE/EXPLAIN만 허용 ===
-QUERY_UPPER=$(echo "$1" | tr '[:lower:]' '[:upper:]' | sed 's/^[[:space:]]*//')
+# 줄바꿈/공백을 정리하여 쿼리 첫 키워드를 정확히 판별
+QUERY_UPPER=$(echo "$1" | tr '\n\r' '  ' | tr '[:lower:]' '[:upper:]' | sed 's/^[[:space:]]*//')
 ALLOWED=false
 
 case "$QUERY_UPPER" in

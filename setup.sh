@@ -2,7 +2,7 @@
 # Caramel 팀원 Claude 환경 셋업 스크립트
 # 사용법:
 #   대화형:  bash setup.sh
-#   자동:    bash setup.sh --role cs --db-host HOST --db-password PASS
+#   자동:    bash setup.sh --role "CS" --db-password PASS
 
 set -e
 
@@ -65,7 +65,6 @@ echo ""
 
 # 인자 파싱
 ROLE=""
-ROLE_NAME=""
 ARG_DB_HOST=""
 ARG_DB_PASSWORD=""
 
@@ -79,32 +78,21 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# 1. 역할 선택
-if [ -n "$ROLE" ]; then
-    case "$ROLE" in
-        cs) ROLE_NAME="CS" ;;
-        marketing) ROLE_NAME="마케팅" ;;
-        operations) ROLE_NAME="운영" ;;
-        *) echo "ERROR: --role 뒤에 cs, marketing, operations 중 하나를 입력하세요."; exit 1 ;;
-    esac
-else
-    echo "팀원 역할을 선택하세요:"
-    echo "  1) CS"
-    echo "  2) 마케팅"
-    echo "  3) 운영"
+# 1. 역할 입력 (자유 형식)
+if [ -z "$ROLE" ]; then
+    echo "팀에서 어떤 역할을 맡고 있나요?"
+    echo "  예: CS, 마케팅, 운영, 개발, 디자인, PM 등 자유롭게 입력"
     echo ""
-    read -p "번호 입력 (1/2/3): " ROLE_NUM
+    read -p "역할 입력: " ROLE
+fi
 
-    case "$ROLE_NUM" in
-        1) ROLE="cs"; ROLE_NAME="CS" ;;
-        2) ROLE="marketing"; ROLE_NAME="마케팅" ;;
-        3) ROLE="operations"; ROLE_NAME="운영" ;;
-        *) echo "ERROR: 1, 2, 3 중 하나를 입력하세요."; exit 1 ;;
-    esac
+if [ -z "$ROLE" ]; then
+    echo "ERROR: 역할을 입력해주세요."
+    exit 1
 fi
 
 echo ""
-echo "${ROLE_NAME}팀으로 설정합니다."
+echo "역할: ${ROLE} (으)로 설정합니다."
 
 # 2. 작업 디렉토리 설정
 WORK_DIR="$HOME/caramel-claude"
@@ -116,14 +104,69 @@ if [ -d "$WORK_DIR" ]; then
 fi
 mkdir -p "$WORK_DIR"
 
-# 3. CLAUDE.md 생성 (공통 + 역할별 병합)
+# 3. CLAUDE.md 생성 (공통 + 역할 컨텍스트)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cat "$SCRIPT_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md"
-echo "" >> "$WORK_DIR/CLAUDE.md"
-cat "$SCRIPT_DIR/roles/${ROLE}.md" >> "$WORK_DIR/CLAUDE.md"
-echo "CLAUDE.md 생성 완료 (공통 + ${ROLE_NAME}팀 규칙)"
 
-# 4. DB 접속 정보 (읽기 전용 유저 — 조회만 가능)
+# 역할 기록
+echo "" >> "$WORK_DIR/CLAUDE.md"
+echo "## 이 사용자의 역할" >> "$WORK_DIR/CLAUDE.md"
+echo "이 사용자는 카라멜 팀에서 **${ROLE}** 역할을 맡고 있습니다. 이 역할에 맞게 답변을 조정하세요." >> "$WORK_DIR/CLAUDE.md"
+
+# 역할별 추가 규칙 (매칭되는 파일이 있으면 추가)
+ROLE_LOWER=$(echo "$ROLE" | tr '[:upper:]' '[:lower:]')
+ROLE_FILE=""
+case "$ROLE_LOWER" in
+    cs) ROLE_FILE="$SCRIPT_DIR/roles/cs.md" ;;
+    마케팅|marketing) ROLE_FILE="$SCRIPT_DIR/roles/marketing.md" ;;
+    운영|operations) ROLE_FILE="$SCRIPT_DIR/roles/operations.md" ;;
+esac
+
+if [ -n "$ROLE_FILE" ] && [ -f "$ROLE_FILE" ]; then
+    echo "" >> "$WORK_DIR/CLAUDE.md"
+    cat "$ROLE_FILE" >> "$WORK_DIR/CLAUDE.md"
+fi
+
+echo "CLAUDE.md 생성 완료"
+
+# 4. 코드 레포 클론 (팀 코드베이스 접근용)
+echo ""
+echo "=== 코드 레포 설정 ==="
+REPOS_DIR="$WORK_DIR/repos"
+mkdir -p "$REPOS_DIR"
+
+if command -v gh &> /dev/null; then
+    if gh auth status &>/dev/null; then
+        if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
+            echo "caramel-all 레포를 클론합니다... (시간이 좀 걸릴 수 있습니다)"
+            gh repo clone the-trive/caramel-all "$REPOS_DIR/caramel-all" -- --depth 1 --recurse-submodules --shallow-submodules 2>&1 || {
+                echo "WARNING: 레포 클론 실패. GitHub 접근 권한을 확인하세요."
+                echo "  the-trive 조직에 초대되어 있는지 확인 후 다시 시도: gh repo clone the-trive/caramel-all $REPOS_DIR/caramel-all"
+            }
+        else
+            echo "caramel-all 레포 이미 존재 — pull 합니다."
+            git -C "$REPOS_DIR/caramel-all" pull --ff-only 2>/dev/null || true
+        fi
+        echo "코드 레포 설정 완료"
+    else
+        echo "WARNING: gh CLI 로그인이 필요합니다. 'gh auth login' 실행 후 다시 셋업하세요."
+    fi
+else
+    echo "WARNING: gh CLI가 설치되어 있지 않습니다."
+    echo "  코드 레포 접근을 위해 설치하세요: https://cli.github.com/"
+    echo "  설치 후 'gh auth login' → 다시 셋업 실행"
+fi
+
+# CLAUDE.md에 레포 경로 추가
+if [ -d "$REPOS_DIR/caramel-all/.git" ]; then
+    echo "" >> "$WORK_DIR/CLAUDE.md"
+    echo "## 코드 레포" >> "$WORK_DIR/CLAUDE.md"
+    echo "- \`repos/caramel-all/\` — 카라멜 전체 코드베이스 (모노레포, 5개 서브모듈)" >> "$WORK_DIR/CLAUDE.md"
+    echo "- 코드에 대한 질문이 오면 이 디렉토리에서 검색하여 답변" >> "$WORK_DIR/CLAUDE.md"
+    echo "- 코드를 수정하지 말 것 — 읽기 전용으로만 사용" >> "$WORK_DIR/CLAUDE.md"
+fi
+
+# 5. DB 접속 정보 (읽기 전용 유저 — 조회만 가능)
 DB_PORT=3306
 DB_USER="caramel_reader"
 DB_NAME="caramel-prod"
@@ -255,11 +298,17 @@ SHEETS_DIR="$WORK_DIR/.tools/mcp-google-sheets"
 mkdir -p "$SHEETS_DIR"
 cp -r "$SCRIPT_DIR/tools/mcp-google-sheets/." "$SHEETS_DIR/"
 cd "$SHEETS_DIR"
-npm install --silent
+npm install --ignore-scripts --silent
 cd "$WORK_DIR"
 echo "Google Sheets MCP 설치 완료"
 
-# 10. DB 연결 테스트
+# 10. 현재 날짜를 CLAUDE.md에 추가 (모델이 날짜를 정확히 인식하도록)
+echo "" >> "$WORK_DIR/CLAUDE.md"
+echo "<!-- DATE_MARKER -->" >> "$WORK_DIR/CLAUDE.md"
+echo "## 현재 날짜" >> "$WORK_DIR/CLAUDE.md"
+echo "오늘은 $(date '+%Y년 %m월 %d일')입니다. 날짜 관련 질문이나 쿼리에서 이 날짜를 기준으로 하세요." >> "$WORK_DIR/CLAUDE.md"
+
+# 11. DB 연결 테스트
 echo ""
 echo "=== DB 연결 테스트 ==="
 RESULT=$(./mysql-query.sh "SELECT 1 AS test" 2>&1)
@@ -271,7 +320,7 @@ else
     exit 1
 fi
 
-# 11. 가드레일 테스트
+# 12. 가드레일 테스트
 echo ""
 echo "=== 가드레일 테스트 ==="
 GUARD_RESULT=$(./mysql-query.sh "DELETE FROM app_user WHERE 1=0" 2>&1)
@@ -285,7 +334,7 @@ echo ""
 echo "=== 셋업 완료 ==="
 echo ""
 echo "  작업 폴더: $WORK_DIR"
-echo "  역할: ${ROLE_NAME}팀"
+echo "  역할: ${ROLE}"
 echo "  스킬:$INSTALLED_SKILLS"
 echo "  자동 업데이트: 매 세션 시작 시 최신 버전 반영"
 echo ""
