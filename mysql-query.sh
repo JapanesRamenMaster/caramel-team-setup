@@ -15,13 +15,27 @@ if [ -z "$DB_HOST" ] || [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_
 fi
 
 # === 가드레일: SELECT/SHOW/DESCRIBE/EXPLAIN만 허용 ===
+# 예외: --allow-zone-change 플래그 사용 시 detailer_work_schedule_rule 테이블 UPDATE/INSERT 허용
+ALLOW_ZONE_CHANGE=false
+QUERY="$1"
+
+if [ "$1" = "--allow-zone-change" ]; then
+    ALLOW_ZONE_CHANGE=true
+    QUERY="$2"
+fi
+
 # 줄바꿈/공백을 정리하여 쿼리 첫 키워드를 정확히 판별
-QUERY_UPPER=$(echo "$1" | tr '\n\r' '  ' | tr '[:lower:]' '[:upper:]' | sed 's/^[[:space:]]*//')
+QUERY_UPPER=$(echo "$QUERY" | tr '\n\r' '  ' | tr '[:lower:]' '[:upper:]' | sed 's/^[[:space:]]*//')
 ALLOWED=false
 
 case "$QUERY_UPPER" in
     SELECT*|SHOW*|DESCRIBE*|DESC\ *|EXPLAIN*)
         ALLOWED=true
+        ;;
+    UPDATE\ DETAILER_WORK_SCHEDULE_RULE\ SET\ DELETED_AT*|INSERT\ INTO\ DETAILER_WORK_SCHEDULE_RULE*)
+        if [ "$ALLOW_ZONE_CHANGE" = true ]; then
+            ALLOWED=true
+        fi
         ;;
 esac
 
@@ -48,4 +62,4 @@ const mysql = require('mysql2/promise');
   console.log(JSON.stringify(rows, null, 2));
   await conn.end();
 })().catch(e => { console.error('DB 오류: ' + e.message); process.exit(1); });
-" "$1"
+" "$QUERY"

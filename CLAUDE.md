@@ -31,6 +31,7 @@
 - **절대로** 데이터를 수정(UPDATE), 삭제(DELETE), 추가(INSERT)하지 마세요
 - 조회(SELECT)만 가능합니다. 데이터 변경이 필요하면 맹주성에게 요청하세요
 - DROP, ALTER, TRUNCATE, CREATE 등 테이블 구조 변경도 금지
+- **예외**: `/zone-change` 스킬의 프로토콜에 따라 디테일러 zone 변경 시에만 `detailer_work_schedule_rule` 테이블의 UPDATE(soft-delete)/INSERT 허용. 스킬 프로토콜 외의 임의 수정은 여전히 금지
 
 ### 슬랙 메시지 전송
 - 슬랙 메시지를 보내기 전에 **반드시** 채널명과 메시지 내용을 사용자에게 보여주고 확인받을 것
@@ -100,6 +101,7 @@
 - `/experiment-doc` — 실험문서 작성 (PM 코치 방식 인터뷰)
 - `/writing` — 문서 작성 시 글쓰기 원칙 자동 적용
 - `/ticket-audit` — 구독 고객 세차권 이용내역 조회 및 소실 원인 분석
+- `/zone-change` — 디테일러 zone 변경 (예: Z1 → Z3). 이름/전화번호 + 목표 zone 입력
 
 ## MCP 연결 가이드
 

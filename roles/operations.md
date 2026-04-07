@@ -15,3 +15,7 @@
 - 디테일러 필터: `detailer.direct_yn = 1 AND detailer.booking_yn = 1`
 - 테스트 계정 제외: `detailer.name != '이상민'`
 - 주말은 디테일러 2~3명이라 통계 스윙이 큼 — 평일만 분석하거나 별도 표기
+
+### 디테일러 zone 변경
+- `/zone-change` 스킬로 디테일러의 zone 배정을 직접 변경 가능 (예: Z1 → Z3)
+- 사용법: `/zone-change 디테일러이름 목표zone` (예: `/zone-change 강지성 Z3`)
