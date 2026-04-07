@@ -254,8 +254,27 @@ if [ -f "$SETTINGS_FILE" ]; then
         else
             echo "Claude Code 세션 훅 이미 등록됨"
         fi
+    elif command -v python3 &> /dev/null; then
+        # jq 없으면 python3 fallback
+        if ! grep -q "caramel-team-setup/update.sh" "$SETTINGS_FILE" 2>/dev/null; then
+            python3 -c "
+import json
+with open('$SETTINGS_FILE', 'r') as f:
+    data = json.load(f)
+hook = {'type': 'command', 'command': '$HOOK_CMD'}
+if 'hooks' not in data:
+    data['hooks'] = {}
+if 'SessionStart' not in data['hooks']:
+    data['hooks']['SessionStart'] = []
+data['hooks']['SessionStart'].append(hook)
+with open('$SETTINGS_FILE', 'w') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+" 2>/dev/null && echo "Claude Code 세션 훅 등록 완료 (python3)" || echo "WARNING: 세션 훅 등록 실패"
+        else
+            echo "Claude Code 세션 훅 이미 등록됨"
+        fi
     else
-        echo "WARNING: jq가 없어서 세션 훅을 자동 등록할 수 없습니다."
+        echo "WARNING: jq/python3 없어서 세션 훅을 자동 등록할 수 없습니다."
         echo "  수동으로 ~/.claude/settings.json에 추가하세요:"
         echo "  \"hooks\": { \"SessionStart\": [{ \"type\": \"command\", \"command\": \"$HOOK_CMD\" }] }"
     fi
@@ -276,6 +295,43 @@ else
 HOOKEOF
     echo "Claude Code 세션 훅 등록 완료 (자동 업데이트)"
 fi
+
+# 8-2. 프로젝트 레벨 훅 등록 (글로벌 훅 덮어쓰기 방지용 이중 안전장치)
+PROJECT_SETTINGS_DIR="$WORK_DIR/.claude"
+PROJECT_SETTINGS_FILE="$PROJECT_SETTINGS_DIR/settings.json"
+mkdir -p "$PROJECT_SETTINGS_DIR"
+
+if [ -f "$PROJECT_SETTINGS_FILE" ]; then
+    if command -v jq &> /dev/null; then
+        if ! jq -e --arg cmd "$HOOK_CMD" \
+            '.hooks.SessionStart[]? | select(.command == $cmd)' \
+            "$PROJECT_SETTINGS_FILE" &>/dev/null; then
+            if jq -e '.hooks.SessionStart' "$PROJECT_SETTINGS_FILE" &>/dev/null; then
+                jq --arg cmd "$HOOK_CMD" \
+                    '.hooks.SessionStart += [{"type": "command", "command": $cmd}]' \
+                    "$PROJECT_SETTINGS_FILE" > "${PROJECT_SETTINGS_FILE}.tmp" && mv "${PROJECT_SETTINGS_FILE}.tmp" "$PROJECT_SETTINGS_FILE"
+            else
+                jq --arg cmd "$HOOK_CMD" \
+                    '.hooks.SessionStart = [{"type": "command", "command": $cmd}]' \
+                    "$PROJECT_SETTINGS_FILE" > "${PROJECT_SETTINGS_FILE}.tmp" && mv "${PROJECT_SETTINGS_FILE}.tmp" "$PROJECT_SETTINGS_FILE"
+            fi
+        fi
+    fi
+else
+    cat > "$PROJECT_SETTINGS_FILE" << PROJHOOKEOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "$HOOK_CMD"
+      }
+    ]
+  }
+}
+PROJHOOKEOF
+fi
+echo "프로젝트 레벨 세션 훅 등록 완료"
 
 # 9. Node.js 확인 및 mysql2 설치
 echo ""
