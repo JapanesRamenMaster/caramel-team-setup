@@ -302,13 +302,20 @@ npm install --ignore-scripts --silent
 cd "$WORK_DIR"
 echo "Google Sheets MCP 설치 완료"
 
-# 10. 현재 날짜를 CLAUDE.md에 추가 (모델이 날짜를 정확히 인식하도록)
+# 10. 설정 저장 (update.sh 마이그레이션용)
+cat > "$WORK_DIR/.setup-config" << CONFIGEOF
+SETUP_VERSION=2
+ROLE=$ROLE
+CONFIGEOF
+echo "설정 저장 완료 (.setup-config)"
+
+# 11. 현재 날짜를 CLAUDE.md에 추가 (모델이 날짜를 정확히 인식하도록)
 echo "" >> "$WORK_DIR/CLAUDE.md"
 echo "<!-- DATE_MARKER -->" >> "$WORK_DIR/CLAUDE.md"
 echo "## 현재 날짜" >> "$WORK_DIR/CLAUDE.md"
 echo "오늘은 $(date '+%Y년 %m월 %d일')입니다. 날짜 관련 질문이나 쿼리에서 이 날짜를 기준으로 하세요." >> "$WORK_DIR/CLAUDE.md"
 
-# 11. DB 연결 테스트
+# 12. DB 연결 테스트
 echo ""
 echo "=== DB 연결 테스트 ==="
 RESULT=$(./mysql-query.sh "SELECT 1 AS test" 2>&1)
@@ -320,7 +327,7 @@ else
     exit 1
 fi
 
-# 12. 가드레일 테스트
+# 13. 가드레일 테스트
 echo ""
 echo "=== 가드레일 테스트 ==="
 GUARD_RESULT=$(./mysql-query.sh "DELETE FROM app_user WHERE 1=0" 2>&1)
