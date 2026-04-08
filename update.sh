@@ -15,6 +15,9 @@ LATEST_VERSION=4
 # Read-only PAT for code repo (setup.sh와 동일)
 CODE_REPO_TOKEN="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"
 
+# Google Sheets 서비스 계정 키 다운로드 URL (setup.sh와 동일)
+SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
+
 cd "$INSTALL_DIR" || exit 0
 
 # 1) Pull 전 상태 저장
@@ -257,10 +260,24 @@ LOGEOF
   # --- Migration v3 → v4: Google Sheets MCP를 .mcp.json에 추가 + PAT 기반 코드 레포 ---
   if [ "${CURRENT_VERSION}" -lt 4 ]; then
 
-    # 4a) .mcp.json에 Google Sheets 추가 (없으면)
+    # 4a) Google Sheets 키 파일 다운로드 (없으면)
+    SHEETS_KEY_PATH="$HOME/.claude/google-sheets-key.json"
+    if [ ! -f "$SHEETS_KEY_PATH" ] && [ -n "$SHEETS_KEY_URL" ]; then
+      mkdir -p "$(dirname "$SHEETS_KEY_PATH")"
+      curl -sL "$SHEETS_KEY_URL" -o "$SHEETS_KEY_PATH" 2>/dev/null && {
+        MIGRATED="$MIGRATED 키파일"
+      } || true
+    fi
+
+    # 4b) EMAIL이 없으면 .mcp.json의 기존 설정이나 CLAUDE.md에서 추출 시도
+    if [ -z "$EMAIL" ]; then
+      # 기존 claude mcp add로 설정한 경우 .mcp.json에서 GOOGLE_SUBJECT 추출
+      EMAIL=$(grep -o '"GOOGLE_SUBJECT"[[:space:]]*:[[:space:]]*"[^"]*"' "$WORK_DIR/.mcp.json" 2>/dev/null | head -1 | sed 's/.*"GOOGLE_SUBJECT"[[:space:]]*:[[:space:]]*"//;s/"//')
+    fi
+
+    # 4c) .mcp.json에 Google Sheets 추가 (없으면)
     if [ -f "$WORK_DIR/.mcp.json" ] && ! grep -q "google-sheets" "$WORK_DIR/.mcp.json" 2>/dev/null; then
       SHEETS_NODE_PATH="$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js"
-      SHEETS_KEY_PATH="$HOME/.claude/google-sheets-key.json"
 
       if [ -n "$EMAIL" ]; then
         if command -v jq &>/dev/null; then
@@ -297,6 +314,9 @@ with open('$WORK_DIR/.mcp.json', 'w') as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
 " 2>/dev/null && MIGRATED="$MIGRATED GoogleSheets-MCP"
         fi
+      else
+        echo "caramel-team-setup: Google Sheets MCP 설정에 이메일이 필요합니다."
+        echo "  Claude에게 \"내 이메일은 name@thetrive.com이야, Google Sheets MCP 설정해줘\"라고 말해주세요."
       fi
     fi
 
