@@ -70,7 +70,7 @@ echo ""
 CODE_REPO_TOKEN="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"
 
 # Google Sheets 서비스 계정 키 다운로드 URL
-SHEETS_KEY_URL="__SHEETS_KEY_URL_PLACEHOLDER__"
+SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
 
 # 인자 파싱
 ROLE=""
