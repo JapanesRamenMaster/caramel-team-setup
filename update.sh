@@ -144,8 +144,8 @@ if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then
   ROLE=""
   EMAIL=""
   if [ -f "$CONFIG_FILE" ]; then
-    ROLE=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
-    EMAIL=$(grep "^EMAIL=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+    ROLE=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
+    EMAIL=$(grep "^EMAIL=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
   fi
 
   MIGRATED=""
