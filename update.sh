@@ -10,7 +10,10 @@ WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 
 # === 최신 버전 (새 마이그레이션 추가 시 이 숫자를 올리고 아래에 로직 추가) ===
-LATEST_VERSION=3
+LATEST_VERSION=4
+
+# Read-only PAT for code repo (setup.sh와 동일)
+CODE_REPO_TOKEN="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"
 
 cd "$INSTALL_DIR" || exit 0
 
@@ -129,8 +132,10 @@ fi
 if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then
   # 저장된 설정 로드
   ROLE=""
+  EMAIL=""
   if [ -f "$CONFIG_FILE" ]; then
     ROLE=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+    EMAIL=$(grep "^EMAIL=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
   fi
 
   MIGRATED=""
@@ -138,12 +143,14 @@ if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then
   # --- Migration v1 → v2: 코드 레포, 날짜 마커, CLAUDE.md 역할 섹션 ---
   if [ "${CURRENT_VERSION}" -lt 2 ]; then
 
-    # 2a) 코드 레포 클론 (없으면)
+    # 2a) 코드 레포 클론 (PAT 방식 — gh CLI 불필요)
     REPOS_DIR="$WORK_DIR/repos"
     if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
-      if command -v gh &>/dev/null && gh auth status &>/dev/null; then
+      if [ "$CODE_REPO_TOKEN" != "__REPO_TOKEN_PLACEHOLDER__" ] && [ -n "$CODE_REPO_TOKEN" ]; then
         mkdir -p "$REPOS_DIR"
-        gh repo clone the-trive/caramel-all "$REPOS_DIR/caramel-all" -- --depth 1 --recurse-submodules --shallow-submodules 2>/dev/null && {
+        git clone --depth 1 --recurse-submodules --shallow-submodules \
+          "https://oauth2:${CODE_REPO_TOKEN}@github.com/the-trive/caramel-all.git" \
+          "$REPOS_DIR/caramel-all" 2>/dev/null && {
           MIGRATED="$MIGRATED 코드레포"
         } || true
       fi
@@ -174,7 +181,6 @@ if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then
 
     # 2c) CLAUDE.md에 역할 섹션 추가 (없으면)
     if [ -n "$ROLE" ] && ! grep -q "## 이 사용자의 역할" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
-      # 안전 규칙 섹션 뒤에 추가 (파일 앞부분에)
       # 간단하게 CLAUDE.md 끝(DATE_MARKER 앞)에 추가
       if grep -q "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md"; then
         LINE_NUM=$(grep -n "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)
@@ -248,6 +254,94 @@ LOGEOF
     fi
   fi
 
+  # --- Migration v3 → v4: Google Sheets MCP를 .mcp.json에 추가 + PAT 기반 코드 레포 ---
+  if [ "${CURRENT_VERSION}" -lt 4 ]; then
+
+    # 4a) .mcp.json에 Google Sheets 추가 (없으면)
+    if [ -f "$WORK_DIR/.mcp.json" ] && ! grep -q "google-sheets" "$WORK_DIR/.mcp.json" 2>/dev/null; then
+      SHEETS_NODE_PATH="$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js"
+      SHEETS_KEY_PATH="$HOME/.claude/google-sheets-key.json"
+
+      if [ -n "$EMAIL" ]; then
+        if command -v jq &>/dev/null; then
+          jq --arg cmd "node" \
+             --arg args "$SHEETS_NODE_PATH" \
+             --arg creds "$SHEETS_KEY_PATH" \
+             --arg subject "$EMAIL" \
+             '.mcpServers["google-sheets"] = {
+               "type": "stdio",
+               "command": $cmd,
+               "args": [$args],
+               "env": {
+                 "GOOGLE_APPLICATION_CREDENTIALS": $creds,
+                 "GOOGLE_SUBJECT": $subject
+               }
+             }' "$WORK_DIR/.mcp.json" > "$WORK_DIR/.mcp.json.tmp" && \
+          mv "$WORK_DIR/.mcp.json.tmp" "$WORK_DIR/.mcp.json"
+          MIGRATED="$MIGRATED GoogleSheets-MCP"
+        elif command -v python3 &>/dev/null; then
+          python3 -c "
+import json
+with open('$WORK_DIR/.mcp.json', 'r') as f:
+    data = json.load(f)
+data['mcpServers']['google-sheets'] = {
+    'type': 'stdio',
+    'command': 'node',
+    'args': ['$SHEETS_NODE_PATH'],
+    'env': {
+        'GOOGLE_APPLICATION_CREDENTIALS': '$SHEETS_KEY_PATH',
+        'GOOGLE_SUBJECT': '$EMAIL'
+    }
+}
+with open('$WORK_DIR/.mcp.json', 'w') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+" 2>/dev/null && MIGRATED="$MIGRATED GoogleSheets-MCP"
+        fi
+      fi
+    fi
+
+    # 4b) 코드 레포가 없으면 PAT로 클론 시도 (gh CLI 불필요)
+    REPOS_DIR="$WORK_DIR/repos"
+    if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
+      if [ "$CODE_REPO_TOKEN" != "__REPO_TOKEN_PLACEHOLDER__" ] && [ -n "$CODE_REPO_TOKEN" ]; then
+        mkdir -p "$REPOS_DIR"
+        git clone --depth 1 --recurse-submodules --shallow-submodules \
+          "https://oauth2:${CODE_REPO_TOKEN}@github.com/the-trive/caramel-all.git" \
+          "$REPOS_DIR/caramel-all" 2>/dev/null && {
+          MIGRATED="$MIGRATED 코드레포(PAT)"
+          # CLAUDE.md에 레포 섹션 추가
+          if ! grep -q "## 코드 레포" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
+            if grep -q "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md"; then
+              LINE_NUM=$(grep -n "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)
+              head -n $((LINE_NUM - 1)) "$WORK_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md.tmp"
+              echo "" >> "$WORK_DIR/CLAUDE.md.tmp"
+              echo "## 코드 레포" >> "$WORK_DIR/CLAUDE.md.tmp"
+              echo "- \`repos/caramel-all/\` — 카라멜 전체 코드베이스 (모노레포, 5개 서브모듈)" >> "$WORK_DIR/CLAUDE.md.tmp"
+              echo "- 코드에 대한 질문이 오면 이 디렉토리에서 검색하여 답변" >> "$WORK_DIR/CLAUDE.md.tmp"
+              echo "- 코드를 수정하지 말 것 — 읽기 전용으로만 사용" >> "$WORK_DIR/CLAUDE.md.tmp"
+              echo "" >> "$WORK_DIR/CLAUDE.md.tmp"
+              tail -n "+$LINE_NUM" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
+              mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
+            fi
+          fi
+        } || true
+      fi
+    fi
+
+    # 4c) .setup-config에 EMAIL 추가 (없으면)
+    if [ -n "$EMAIL" ] && [ -f "$CONFIG_FILE" ]; then
+      if ! grep -q "^EMAIL=" "$CONFIG_FILE" 2>/dev/null; then
+        echo "EMAIL=$EMAIL" >> "$CONFIG_FILE"
+      fi
+    fi
+
+    # 4d) Google Sheets MCP dist 업데이트
+    SHEETS_DIR="$WORK_DIR/.tools/mcp-google-sheets"
+    if [ -d "$SHEETS_DIR" ]; then
+      cp -r "$INSTALL_DIR/tools/mcp-google-sheets/dist/." "$SHEETS_DIR/dist/" 2>/dev/null || true
+    fi
+  fi
+
   # 버전 업데이트
   if [ -f "$CONFIG_FILE" ]; then
     # 기존 파일에서 버전만 교체
@@ -258,6 +352,7 @@ LOGEOF
     # config 파일이 없으면 생성 (v1 이전 설치)
     echo "SETUP_VERSION=$LATEST_VERSION" > "$CONFIG_FILE"
     [ -n "$ROLE" ] && echo "ROLE=$ROLE" >> "$CONFIG_FILE"
+    [ -n "$EMAIL" ] && echo "EMAIL=$EMAIL" >> "$CONFIG_FILE"
   fi
 
   if [ -n "$MIGRATED" ]; then
@@ -266,7 +361,7 @@ LOGEOF
 fi
 
 # ============================================================
-# 8) 현재 날짜 갱신 (매 세션마다 항상 실행)
+# 9) 현재 날짜 갱신 (매 세션마다 항상 실행)
 # ============================================================
 if [ -f "$WORK_DIR/CLAUDE.md" ] && grep -q "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md"; then
   LINE_NUM=$(grep -n "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)

@@ -2,7 +2,7 @@
 # Caramel 팀원 Claude 환경 셋업 스크립트
 # 사용법:
 #   대화형:  bash setup.sh
-#   자동:    bash setup.sh --role "CS" --db-password PASS
+#   자동:    bash setup.sh --role "CS" --db-password PASS --email "name@thetrive.com"
 
 set -e
 
@@ -63,16 +63,27 @@ echo ""
 echo "=== Caramel Claude 팀 환경 셋업 ==="
 echo ""
 
+# ============================================================
+# Read-only PAT for code repo (caramel-all) — GitHub 계정 불필요
+# Fine-grained PAT: the-trive/caramel-all Contents: Read-only
+# ============================================================
+CODE_REPO_TOKEN="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"
+
+# Google Sheets 서비스 계정 키 다운로드 URL
+SHEETS_KEY_URL="__SHEETS_KEY_URL_PLACEHOLDER__"
+
 # 인자 파싱
 ROLE=""
 ARG_DB_HOST=""
 ARG_DB_PASSWORD=""
+ARG_EMAIL=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --role) ROLE="$2"; shift 2 ;;
         --db-host) ARG_DB_HOST="$2"; shift 2 ;;
         --db-password) ARG_DB_PASSWORD="$2"; shift 2 ;;
+        --email) ARG_EMAIL="$2"; shift 2 ;;
         --quiet) shift ;;  # 이미 위에서 처리됨
         *) echo "WARNING: 알 수 없는 인자 '$1'"; shift ;;
     esac
@@ -93,6 +104,16 @@ fi
 
 echo ""
 echo "역할: ${ROLE} (으)로 설정합니다."
+
+# 이메일 입력 (Google Sheets 임퍼소네이션용)
+if [ -z "$ARG_EMAIL" ]; then
+    echo ""
+    read -p "회사 이메일 입력 (예: name@thetrive.com): " ARG_EMAIL
+fi
+
+if [ -z "$ARG_EMAIL" ]; then
+    echo "WARNING: 이메일 없이 진행합니다. Google Sheets MCP는 이메일 설정 후 사용 가능합니다."
+fi
 
 # 2. 작업 디렉토리 설정
 WORK_DIR="$HOME/caramel-claude"
@@ -129,32 +150,26 @@ fi
 
 echo "CLAUDE.md 생성 완료"
 
-# 4. 코드 레포 클론 (팀 코드베이스 접근용)
+# 4. 코드 레포 클론 (read-only PAT 방식 — GitHub 계정 불필요)
 echo ""
 echo "=== 코드 레포 설정 ==="
 REPOS_DIR="$WORK_DIR/repos"
 mkdir -p "$REPOS_DIR"
 
-if command -v gh &> /dev/null; then
-    if gh auth status &>/dev/null; then
-        if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
-            echo "caramel-all 레포를 클론합니다... (시간이 좀 걸릴 수 있습니다)"
-            gh repo clone the-trive/caramel-all "$REPOS_DIR/caramel-all" -- --depth 1 --recurse-submodules --shallow-submodules 2>&1 || {
-                echo "WARNING: 레포 클론 실패. GitHub 접근 권한을 확인하세요."
-                echo "  the-trive 조직에 초대되어 있는지 확인 후 다시 시도: gh repo clone the-trive/caramel-all $REPOS_DIR/caramel-all"
-            }
-        else
-            echo "caramel-all 레포 이미 존재 — pull 합니다."
-            git -C "$REPOS_DIR/caramel-all" pull --ff-only 2>/dev/null || true
-        fi
-        echo "코드 레포 설정 완료"
-    else
-        echo "WARNING: gh CLI 로그인이 필요합니다. 'gh auth login' 실행 후 다시 셋업하세요."
-    fi
+if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
+    echo "caramel-all 레포를 클론합니다... (시간이 좀 걸릴 수 있습니다)"
+    git clone --depth 1 --recurse-submodules --shallow-submodules \
+        "https://oauth2:${CODE_REPO_TOKEN}@github.com/the-trive/caramel-all.git" \
+        "$REPOS_DIR/caramel-all" 2>&1 || {
+        echo "WARNING: 레포 클론 실패. 나중에 다시 시도합니다."
+    }
 else
-    echo "WARNING: gh CLI가 설치되어 있지 않습니다."
-    echo "  코드 레포 접근을 위해 설치하세요: https://cli.github.com/"
-    echo "  설치 후 'gh auth login' → 다시 셋업 실행"
+    echo "caramel-all 레포 이미 존재 — pull 합니다."
+    git -C "$REPOS_DIR/caramel-all" pull --ff-only 2>/dev/null || true
+fi
+
+if [ -d "$REPOS_DIR/caramel-all/.git" ]; then
+    echo "코드 레포 설정 완료"
 fi
 
 # CLAUDE.md에 레포 경로 추가
@@ -201,7 +216,38 @@ cp "$SCRIPT_DIR/mysql-query.sh" "$WORK_DIR/mysql-query.sh"
 chmod +x "$WORK_DIR/mysql-query.sh"
 echo "mysql-query.sh 복사 완료 (읽기 전용 가드레일 포함)"
 
-# 6. .mcp.json 생성 (템플릿에서 변수 치환)
+# 6. .mcp.json 생성 (MySQL + Google Sheets)
+# Google Sheets: 서비스 계정 + 임퍼소네이션 (GOOGLE_SUBJECT = 팀원 이메일)
+# → 팀원 본인의 Google Drive에서 시트가 생성/수정됨
+SHEETS_NODE_PATH="$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js"
+SHEETS_KEY_PATH="$HOME/.claude/google-sheets-key.json"
+
+if [ -n "$ARG_EMAIL" ]; then
+cat > "$WORK_DIR/.mcp.json" << EOF
+{
+  "mcpServers": {
+    "mysql": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@benborla29/mcp-server-mysql"],
+      "env": {
+        "MYSQL_CONNECTION_STRING": "mysql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}",
+        "MULTI_DB": "false"
+      }
+    },
+    "google-sheets": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${SHEETS_NODE_PATH}"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "${SHEETS_KEY_PATH}",
+        "GOOGLE_SUBJECT": "${ARG_EMAIL}"
+      }
+    }
+  }
+}
+EOF
+else
 cat > "$WORK_DIR/.mcp.json" << EOF
 {
   "mcpServers": {
@@ -217,6 +263,7 @@ cat > "$WORK_DIR/.mcp.json" << EOF
   }
 }
 EOF
+fi
 echo ".mcp.json 생성 완료"
 
 # 7. 참조 문서 복사
@@ -358,10 +405,32 @@ npm install --ignore-scripts --silent
 cd "$WORK_DIR"
 echo "Google Sheets MCP 설치 완료"
 
+# 9-1. Google Sheets 서비스 계정 키 다운로드
+if [ ! -f "$SHEETS_KEY_PATH" ]; then
+    echo ""
+    echo "=== Google Sheets 키 설정 ==="
+    if [ "$SHEETS_KEY_URL" != "__SHEETS_KEY_URL_PLACEHOLDER__" ] && [ -n "$SHEETS_KEY_URL" ]; then
+        mkdir -p "$(dirname "$SHEETS_KEY_PATH")"
+        curl -sL "$SHEETS_KEY_URL" -o "$SHEETS_KEY_PATH" 2>/dev/null && {
+            echo "Google Sheets 키 파일 다운로드 완료"
+        } || {
+            echo "WARNING: 키 파일 다운로드 실패. 맹주성에게 키 파일을 요청하세요."
+            echo "  받은 파일을 ~/.claude/google-sheets-key.json 에 배치하면 자동으로 연결됩니다."
+        }
+    else
+        echo "Google Sheets 키 파일이 없습니다."
+        echo "  맹주성에게 키 파일을 요청하세요."
+        echo "  받은 파일을 ~/.claude/google-sheets-key.json 에 배치하면 자동으로 연결됩니다."
+    fi
+else
+    echo "Google Sheets 키 파일 이미 존재"
+fi
+
 # 10. 설정 저장 (update.sh 마이그레이션용)
 cat > "$WORK_DIR/.setup-config" << CONFIGEOF
-SETUP_VERSION=3
+SETUP_VERSION=4
 ROLE=$ROLE
+EMAIL=$ARG_EMAIL
 CONFIGEOF
 echo "설정 저장 완료 (.setup-config)"
 
@@ -393,20 +462,30 @@ else
     echo "WARNING: 가드레일이 작동하지 않습니다. mysql-query.sh를 확인하세요."
 fi
 
+# 14. 임시 클론 디렉토리 정리
+for cleanup_dir in "/tmp/caramel-team-setup" "$HOME/caramel-team-setup"; do
+    if [ -d "$cleanup_dir" ] && [ "$cleanup_dir" != "$INSTALL_DIR" ]; then
+        rm -rf "$cleanup_dir"
+    fi
+done
+
 echo ""
-echo "=== 셋업 완료 ==="
+echo "==========================================="
+echo "  셋업 완료!"
 echo ""
-echo "  작업 폴더: $WORK_DIR"
+echo "  작업 폴더: ~/caramel-claude"
 echo "  역할: ${ROLE}"
 echo "  스킬:$INSTALLED_SKILLS"
 echo "  자동 업데이트: 매 세션 시작 시 최신 버전 반영"
+echo ""
+echo "  VSCode에서 ~/caramel-claude 폴더를 열어주세요."
+echo "  이 폴더가 앞으로 사용할 작업 공간입니다."
+echo "==========================================="
 echo ""
 
 # VSCode에서 자동으로 폴더 열기
 if command -v code &> /dev/null; then
     echo "VSCode에서 $WORK_DIR 폴더를 엽니다..."
     code "$WORK_DIR"
-else
-    echo "  VSCode에서 $WORK_DIR 폴더를 열어주세요."
 fi
 echo ""
