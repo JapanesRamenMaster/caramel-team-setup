@@ -26,8 +26,15 @@ OLD_HEAD=$(git rev-parse HEAD 2>/dev/null)
 # 2) Pull (fast-forward only, 충돌 방지)
 git pull --ff-only 2>/dev/null || true
 
-# 3) Pull 후 상태 비교
+# 3) Pull 후 상태 비교 → 변경 시 새 스크립트로 재실행
 NEW_HEAD=$(git rev-parse HEAD 2>/dev/null)
+
+if [ "$OLD_HEAD" != "$NEW_HEAD" ] && [ "${CARAMEL_UPDATE_REEXEC:-}" != "1" ]; then
+  # update.sh 자체가 변경되었을 수 있으므로 새 버전으로 재실행
+  export CARAMEL_UPDATE_REEXEC=1
+  exec "$INSTALL_DIR/update.sh" "$@"
+fi
+unset CARAMEL_UPDATE_REEXEC
 
 if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
   # 4) 스킬 심링크 재생성 (새 스킬 포함)
@@ -316,7 +323,12 @@ with open('$WORK_DIR/.mcp.json', 'w') as f:
         fi
       else
         echo "caramel-team-setup: Google Sheets MCP 설정에 이메일이 필요합니다."
-        echo "  Claude에게 \"내 이메일은 name@thetrive.com이야, Google Sheets MCP 설정해줘\"라고 말해주세요."
+        echo "  사용자에게 회사 이메일(@thetrive.com)을 물어보세요."
+        echo "  이메일을 받으면 아래 두 작업을 실행하세요:"
+        echo "  1. echo \"EMAIL=이메일\" >> ~/caramel-claude/.setup-config"
+        echo "  2. .mcp.json에 google-sheets 서버 추가 (GOOGLE_SUBJECT=이메일)"
+        echo "  참고: GOOGLE_APPLICATION_CREDENTIALS=$HOME/.claude/google-sheets-key.json"
+        echo "  참고: command=node, args=$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js"
       fi
     fi
 

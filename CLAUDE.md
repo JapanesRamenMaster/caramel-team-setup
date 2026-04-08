@@ -119,6 +119,23 @@ Claude Code에서 외부 서비스 연동은 **Claude.ai 팀 계정의 Integrati
 연결 방법: Claude.ai 로그인 → Settings → Integrations → 각 서비스 연결
 연결 후 Claude Code에서 바로 사용 가능합니다.
 
+## Google Sheets 이메일 설정 (자동 감지)
+
+세션 시작 시 `.mcp.json`에 `google-sheets` 서버가 없으면, 사용자에게 회사 이메일(@thetrive.com)을 물어보세요.
+이메일을 받으면 아래 두 작업을 실행하세요:
+
+1. `.setup-config`에 이메일 저장:
+```bash
+echo "EMAIL=이메일주소" >> ~/caramel-claude/.setup-config
+```
+
+2. `.mcp.json`에 google-sheets 서버 추가 (jq 사용):
+```bash
+jq --arg node "node" --arg args "$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js" --arg creds "$HOME/.claude/google-sheets-key.json" --arg subject "이메일주소" '.mcpServers["google-sheets"] = {"type":"stdio","command":$node,"args":[$args],"env":{"GOOGLE_APPLICATION_CREDENTIALS":$creds,"GOOGLE_SUBJECT":$subject}}' ~/caramel-claude/.mcp.json > ~/caramel-claude/.mcp.json.tmp && mv ~/caramel-claude/.mcp.json.tmp ~/caramel-claude/.mcp.json
+```
+
+설정 후 사용자에게 "VS Code를 재시작하면 Google Sheets가 연결됩니다"라고 안내하세요.
+
 ## 소통 규칙
 
 - 한국어로 소통
