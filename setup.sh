@@ -429,8 +429,8 @@ fi
 # 10. 설정 저장 (update.sh 마이그레이션용)
 cat > "$WORK_DIR/.setup-config" << CONFIGEOF
 SETUP_VERSION=4
-ROLE=$ROLE
-EMAIL=$ARG_EMAIL
+ROLE="$ROLE"
+EMAIL="$ARG_EMAIL"
 CONFIGEOF
 echo "설정 저장 완료 (.setup-config)"
 

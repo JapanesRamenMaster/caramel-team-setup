@@ -266,26 +266,35 @@ LOGEOF
 
   # --- Migration v3 → v4: Google Sheets MCP를 .mcp.json에 추가 + PAT 기반 코드 레포 ---
   if [ "${CURRENT_VERSION}" -lt 4 ]; then
-
-    # 4a) Google Sheets 키 파일 다운로드 (없으면)
     SHEETS_KEY_PATH="$HOME/.claude/google-sheets-key.json"
+    SHEETS_NODE_PATH="$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js"
+    V4_SHEETS_OK=false
+
+    # 4a) Google Sheets 키 파일 다운로드 (없으면) + JSON 검증
     if [ ! -f "$SHEETS_KEY_PATH" ] && [ -n "$SHEETS_KEY_URL" ]; then
       mkdir -p "$(dirname "$SHEETS_KEY_PATH")"
-      curl -sL "$SHEETS_KEY_URL" -o "$SHEETS_KEY_PATH" 2>/dev/null && {
+      curl -sL "$SHEETS_KEY_URL" -o "$SHEETS_KEY_PATH.tmp" 2>/dev/null
+      # 다운로드된 파일이 JSON인지 검증
+      if [ -f "$SHEETS_KEY_PATH.tmp" ] && head -c 1 "$SHEETS_KEY_PATH.tmp" | grep -q '{'; then
+        mv "$SHEETS_KEY_PATH.tmp" "$SHEETS_KEY_PATH"
         MIGRATED="$MIGRATED 키파일"
-      } || true
+      else
+        rm -f "$SHEETS_KEY_PATH.tmp"
+      fi
     fi
 
-    # 4b) EMAIL이 없으면 .mcp.json의 기존 설정이나 CLAUDE.md에서 추출 시도
+    # 4b) EMAIL 추출: .setup-config → project .mcp.json → global .mcp.json
     if [ -z "$EMAIL" ]; then
-      # 기존 claude mcp add로 설정한 경우 .mcp.json에서 GOOGLE_SUBJECT 추출
+      # project .mcp.json에서 추출
       EMAIL=$(grep -o '"GOOGLE_SUBJECT"[[:space:]]*:[[:space:]]*"[^"]*"' "$WORK_DIR/.mcp.json" 2>/dev/null | head -1 | sed 's/.*"GOOGLE_SUBJECT"[[:space:]]*:[[:space:]]*"//;s/"//')
+    fi
+    if [ -z "$EMAIL" ]; then
+      # global .mcp.json에서 추출 (claude mcp add로 설정한 경우)
+      EMAIL=$(grep -o '"GOOGLE_SUBJECT"[[:space:]]*:[[:space:]]*"[^"]*"' "$HOME/.claude/.mcp.json" 2>/dev/null | head -1 | sed 's/.*"GOOGLE_SUBJECT"[[:space:]]*:[[:space:]]*"//;s/"//')
     fi
 
     # 4c) .mcp.json에 Google Sheets 추가 (없으면)
     if [ -f "$WORK_DIR/.mcp.json" ] && ! grep -q "google-sheets" "$WORK_DIR/.mcp.json" 2>/dev/null; then
-      SHEETS_NODE_PATH="$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js"
-
       if [ -n "$EMAIL" ]; then
         if command -v jq &>/dev/null; then
           jq --arg cmd "node" \
@@ -303,6 +312,7 @@ LOGEOF
              }' "$WORK_DIR/.mcp.json" > "$WORK_DIR/.mcp.json.tmp" && \
           mv "$WORK_DIR/.mcp.json.tmp" "$WORK_DIR/.mcp.json"
           MIGRATED="$MIGRATED GoogleSheets-MCP"
+          V4_SHEETS_OK=true
         elif command -v python3 &>/dev/null; then
           python3 -c "
 import json
@@ -319,20 +329,15 @@ data['mcpServers']['google-sheets'] = {
 }
 with open('$WORK_DIR/.mcp.json', 'w') as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
-" 2>/dev/null && MIGRATED="$MIGRATED GoogleSheets-MCP"
+" 2>/dev/null && { MIGRATED="$MIGRATED GoogleSheets-MCP"; V4_SHEETS_OK=true; }
         fi
-      else
-        echo "caramel-team-setup: Google Sheets MCP 설정에 이메일이 필요합니다."
-        echo "  사용자에게 회사 이메일(@thetrive.com)을 물어보세요."
-        echo "  이메일을 받으면 아래 두 작업을 실행하세요:"
-        echo "  1. echo \"EMAIL=이메일\" >> ~/caramel-claude/.setup-config"
-        echo "  2. .mcp.json에 google-sheets 서버 추가 (GOOGLE_SUBJECT=이메일)"
-        echo "  참고: GOOGLE_APPLICATION_CREDENTIALS=$HOME/.claude/google-sheets-key.json"
-        echo "  참고: command=node, args=$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js"
       fi
+    else
+      # 이미 google-sheets가 있으면 성공으로 간주
+      V4_SHEETS_OK=true
     fi
 
-    # 4b) 코드 레포가 없으면 PAT로 클론 시도 (gh CLI 불필요)
+    # 4d) 코드 레포가 없으면 PAT로 클론 시도 (gh CLI 불필요)
     REPOS_DIR="$WORK_DIR/repos"
     if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
       if [ "$CODE_REPO_TOKEN" != "__REPO_TOKEN_PLACEHOLDER__" ] && [ -n "$CODE_REPO_TOKEN" ]; then
@@ -360,35 +365,69 @@ with open('$WORK_DIR/.mcp.json', 'w') as f:
       fi
     fi
 
-    # 4c) .setup-config에 EMAIL 추가 (없으면)
+    # 4e) .setup-config에 EMAIL 추가 (없으면)
     if [ -n "$EMAIL" ] && [ -f "$CONFIG_FILE" ]; then
       if ! grep -q "^EMAIL=" "$CONFIG_FILE" 2>/dev/null; then
-        echo "EMAIL=$EMAIL" >> "$CONFIG_FILE"
+        echo "EMAIL=\"$EMAIL\"" >> "$CONFIG_FILE"
       fi
     fi
 
-    # 4d) Google Sheets MCP dist 업데이트
+    # 4f) Google Sheets MCP dist 업데이트
     SHEETS_DIR="$WORK_DIR/.tools/mcp-google-sheets"
     if [ -d "$SHEETS_DIR" ]; then
       cp -r "$INSTALL_DIR/tools/mcp-google-sheets/dist/." "$SHEETS_DIR/dist/" 2>/dev/null || true
     fi
+
+    # 4g) CLAUDE.md에 "Google Sheets 이메일 설정" 섹션 추가 (없으면)
+    if [ -f "$WORK_DIR/CLAUDE.md" ] && ! grep -q "## Google Sheets 이메일 설정" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
+      if grep -q "## 소통 규칙" "$WORK_DIR/CLAUDE.md"; then
+        LINE_NUM=$(grep -n "## 소통 규칙" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)
+        head -n $((LINE_NUM - 1)) "$WORK_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md.tmp"
+        cat >> "$WORK_DIR/CLAUDE.md.tmp" << 'SHEETSEOF'
+## Google Sheets 이메일 설정 (자동 감지)
+
+세션 시작 시 `.mcp.json`에 `google-sheets` 서버가 없으면, 사용자에게 회사 이메일(@thetrive.com)을 물어보세요.
+이메일을 받으면 아래 두 작업을 실행하세요:
+
+1. `.setup-config`에 이메일 저장:
+```bash
+echo "EMAIL=이메일주소" >> ~/caramel-claude/.setup-config
+```
+
+2. `.mcp.json`에 google-sheets 서버 추가 (jq 사용):
+```bash
+jq --arg node "node" --arg args "$HOME/caramel-claude/.tools/mcp-google-sheets/dist/index.js" --arg creds "$HOME/.claude/google-sheets-key.json" --arg subject "이메일주소" '.mcpServers["google-sheets"] = {"type":"stdio","command":$node,"args":[$args],"env":{"GOOGLE_APPLICATION_CREDENTIALS":$creds,"GOOGLE_SUBJECT":$subject}}' ~/caramel-claude/.mcp.json > ~/caramel-claude/.mcp.json.tmp && mv ~/caramel-claude/.mcp.json.tmp ~/caramel-claude/.mcp.json
+```
+
+설정 후 사용자에게 "VS Code를 재시작하면 Google Sheets가 연결됩니다"라고 안내하세요.
+
+SHEETSEOF
+        tail -n "+$LINE_NUM" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
+        mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
+        MIGRATED="$MIGRATED Sheets이메일섹션"
+      fi
+    fi
   fi
 
-  # 버전 업데이트
+  # 버전 업데이트 — Google Sheets MCP가 설정 안 됐으면 버전을 올리지 않음 (다음 세션에 재시도)
+  EFFECTIVE_VERSION=$LATEST_VERSION
+  if [ "$V4_SHEETS_OK" = false ] && [ "${CURRENT_VERSION}" -lt 4 ]; then
+    # Google Sheets 미완료 → 버전을 3으로 유지하여 다음 세션에 재시도
+    EFFECTIVE_VERSION=3
+  fi
+
   if [ -f "$CONFIG_FILE" ]; then
-    # 기존 파일에서 버전만 교체
     grep -v "^SETUP_VERSION=" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" 2>/dev/null || true
-    echo "SETUP_VERSION=$LATEST_VERSION" >> "$CONFIG_FILE.tmp"
+    echo "SETUP_VERSION=$EFFECTIVE_VERSION" >> "$CONFIG_FILE.tmp"
     mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
   else
-    # config 파일이 없으면 생성 (v1 이전 설치)
-    echo "SETUP_VERSION=$LATEST_VERSION" > "$CONFIG_FILE"
-    [ -n "$ROLE" ] && echo "ROLE=$ROLE" >> "$CONFIG_FILE"
-    [ -n "$EMAIL" ] && echo "EMAIL=$EMAIL" >> "$CONFIG_FILE"
+    echo "SETUP_VERSION=$EFFECTIVE_VERSION" > "$CONFIG_FILE"
+    [ -n "$ROLE" ] && echo "ROLE=\"$ROLE\"" >> "$CONFIG_FILE"
+    [ -n "$EMAIL" ] && echo "EMAIL=\"$EMAIL\"" >> "$CONFIG_FILE"
   fi
 
   if [ -n "$MIGRATED" ]; then
-    echo "caramel-team-setup 환경 업그레이드 (v${CURRENT_VERSION} → v${LATEST_VERSION}):$MIGRATED"
+    echo "caramel-team-setup 환경 업그레이드 (v${CURRENT_VERSION} → v${EFFECTIVE_VERSION}):$MIGRATED"
   fi
 fi
 
