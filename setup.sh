@@ -67,7 +67,7 @@ echo ""
 # Read-only PAT for code repo (caramel-all) — GitHub 계정 불필요
 # Classic PAT: repo scope, no expiration
 # ============================================================
-CODE_REPO_TOKEN="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"
+CODE_REPO_TOKEN="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"
 
 # Google Sheets 서비스 계정 키 다운로드 URL
 SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
