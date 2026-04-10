@@ -64,16 +64,10 @@ echo "=== Caramel Claude 팀 환경 셋업 ==="
 echo ""
 
 # ============================================================
-# SSH deploy key for code repo (caramel-all) — GitHub 계정 불필요
-# Read-only deploy key registered on the-trive/caramel-all
+# SSH deploy keys for code repos — GitHub 계정 불필요
+# deploy-keys/ 디렉토리에 레포별 read-only deploy key 보관
 # ============================================================
-DEPLOY_KEY_CONTENT="-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACCu8wb6S8aPraMFC/crJg/3XJnAs98tje3m6nc2IcKzFgAAAKB91H4YfdR+
-GAAAAAtzc2gtZWQyNTUxOQAAACCu8wb6S8aPraMFC/crJg/3XJnAs98tje3m6nc2IcKzFg
-AAAEAgcihJDeSsRdDYbs6HZJj8SkD+dtwilnwoW5YBkmcnJa7zBvpLxo+towUL9ysmD/dc
-mcCz3y2N7ebqdzYhwrMWAAAAG2NhcmFtZWwtdGVhbS1zZXR1cC1yZWFkb25seQEC
------END OPENSSH PRIVATE KEY-----"
+DEPLOY_KEYS_DIR="$SCRIPT_DIR/deploy-keys"
 
 # Google Sheets 서비스 계정 키 다운로드 URL
 SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
@@ -162,35 +156,60 @@ echo "=== 코드 레포 설정 ==="
 REPOS_DIR="$WORK_DIR/repos"
 mkdir -p "$REPOS_DIR"
 
-# Deploy key 설치
-DEPLOY_KEY_PATH="$HOME/.ssh/caramel-deploy-key"
-mkdir -p "$HOME/.ssh"
-echo "$DEPLOY_KEY_CONTENT" > "$DEPLOY_KEY_PATH"
-chmod 600 "$DEPLOY_KEY_PATH"
+# Deploy keys 설치 (레포별 개별 키)
+SSH_DIR="$HOME/.ssh"
+mkdir -p "$SSH_DIR"
+SSH_CONFIG="$SSH_DIR/config"
 
-# SSH config에 caramel-all 전용 호스트 등록
-SSH_CONFIG="$HOME/.ssh/config"
-if ! grep -q "caramel-all-deploy" "$SSH_CONFIG" 2>/dev/null; then
-    cat >> "$SSH_CONFIG" << SSHEOF
+REPOS="caramel-all caramel-api caramel-app caramel-detailer-app caramel-sales-admin careplus-web chart"
+for repo_name in $REPOS; do
+    KEY_SRC="$DEPLOY_KEYS_DIR/$repo_name"
+    KEY_DST="$SSH_DIR/caramel-deploy-${repo_name}"
+    if [ -f "$KEY_SRC" ]; then
+        cp "$KEY_SRC" "$KEY_DST"
+        chmod 600 "$KEY_DST"
+        # SSH config에 호스트 alias 등록
+        ALIAS="caramel-deploy-${repo_name}"
+        if ! grep -q "$ALIAS" "$SSH_CONFIG" 2>/dev/null; then
+            cat >> "$SSH_CONFIG" << SSHEOF
 
-# Caramel code repo (deploy key, read-only)
-Host caramel-all-deploy
+Host ${ALIAS}
     HostName github.com
     User git
-    IdentityFile $DEPLOY_KEY_PATH
+    IdentityFile ${KEY_DST}
     IdentitiesOnly yes
     StrictHostKeyChecking no
 SSHEOF
-    chmod 644 "$SSH_CONFIG"
-fi
+        fi
+    fi
+done
+chmod 644 "$SSH_CONFIG" 2>/dev/null || true
+echo "Deploy keys 설치 완료"
 
 if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
     echo "caramel-all 레포를 클론합니다... (시간이 좀 걸릴 수 있습니다)"
-    git clone --depth 1 --recurse-submodules --shallow-submodules \
-        "git@caramel-all-deploy:the-trive/caramel-all.git" \
+    # 서브모듈 URL을 deploy key alias로 변환하기 위해 먼저 메인만 클론
+    GIT_SSH_COMMAND="ssh -i $SSH_DIR/caramel-deploy-caramel-all -o IdentitiesOnly=yes -o StrictHostKeyChecking=no" \
+    git clone --depth 1 \
+        "git@github.com:the-trive/caramel-all.git" \
         "$REPOS_DIR/caramel-all" 2>&1 || {
         echo "WARNING: 레포 클론 실패. 나중에 다시 시도합니다."
     }
+
+    # 서브모듈별로 개별 deploy key 사용하여 클론
+    if [ -d "$REPOS_DIR/caramel-all/.git" ]; then
+        cd "$REPOS_DIR/caramel-all"
+        for repo_name in caramel-api caramel-app caramel-detailer-app caramel-sales-admin careplus-web chart; do
+            KEY_FILE="$SSH_DIR/caramel-deploy-${repo_name}"
+            if [ -f "$KEY_FILE" ]; then
+                GIT_SSH_COMMAND="ssh -i $KEY_FILE -o IdentitiesOnly=yes -o StrictHostKeyChecking=no" \
+                git submodule update --init --depth 1 -- "$repo_name" 2>&1 || {
+                    echo "WARNING: ${repo_name} 서브모듈 클론 실패"
+                }
+            fi
+        done
+        cd "$WORK_DIR"
+    fi
 else
     echo "caramel-all 레포 이미 존재 — pull 합니다."
     git -C "$REPOS_DIR/caramel-all" pull --ff-only 2>/dev/null || true
