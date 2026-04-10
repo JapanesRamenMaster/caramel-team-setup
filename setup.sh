@@ -65,9 +65,9 @@ echo ""
 
 # ============================================================
 # SSH deploy keys for code repos — GitHub 계정 불필요
-# deploy-keys/ 디렉토리에 레포별 read-only deploy key 보관
+# Google Drive에서 다운로드 (레포에 포함하면 secret scanning에 걸림)
 # ============================================================
-DEPLOY_KEYS_DIR="$SCRIPT_DIR/deploy-keys"
+DEPLOY_KEYS_URL="https://drive.google.com/uc?export=download&id=1vgZClzDTcTlnEpcfSrxfQNVLMy5qnJ6D"
 
 # Google Sheets 서비스 계정 키 다운로드 URL
 SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
@@ -156,14 +156,22 @@ echo "=== 코드 레포 설정 ==="
 REPOS_DIR="$WORK_DIR/repos"
 mkdir -p "$REPOS_DIR"
 
-# Deploy keys 설치 (레포별 개별 키)
+# Deploy keys 다운로드 및 설치
 SSH_DIR="$HOME/.ssh"
 mkdir -p "$SSH_DIR"
 SSH_CONFIG="$SSH_DIR/config"
 
+DEPLOY_KEYS_TMP="/tmp/caramel-deploy-keys-$$"
+mkdir -p "$DEPLOY_KEYS_TMP"
+echo "Deploy keys 다운로드 중..."
+curl -sL "$DEPLOY_KEYS_URL" -o "$DEPLOY_KEYS_TMP/keys.tar.gz" && \
+    tar -xzf "$DEPLOY_KEYS_TMP/keys.tar.gz" -C "$DEPLOY_KEYS_TMP" 2>/dev/null || {
+    echo "WARNING: Deploy keys 다운로드 실패. 코드 레포 클론을 건너뜁니다."
+}
+
 REPOS="caramel-all caramel-api caramel-app caramel-detailer-app caramel-sales-admin careplus-web chart"
 for repo_name in $REPOS; do
-    KEY_SRC="$DEPLOY_KEYS_DIR/$repo_name"
+    KEY_SRC="$DEPLOY_KEYS_TMP/$repo_name"
     KEY_DST="$SSH_DIR/caramel-deploy-${repo_name}"
     if [ -f "$KEY_SRC" ]; then
         cp "$KEY_SRC" "$KEY_DST"
@@ -218,6 +226,9 @@ fi
 if [ -d "$REPOS_DIR/caramel-all/.git" ]; then
     echo "코드 레포 설정 완료"
 fi
+
+# Deploy keys 임시 파일 정리
+rm -rf "$DEPLOY_KEYS_TMP"
 
 # CLAUDE.md에 레포 경로 추가
 if [ -d "$REPOS_DIR/caramel-all/.git" ]; then
