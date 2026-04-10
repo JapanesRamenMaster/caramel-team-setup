@@ -64,10 +64,16 @@ echo "=== Caramel Claude 팀 환경 셋업 ==="
 echo ""
 
 # ============================================================
-# Read-only PAT for code repo (caramel-all) — GitHub 계정 불필요
-# Classic PAT: repo scope, no expiration
+# SSH deploy key for code repo (caramel-all) — GitHub 계정 불필요
+# Read-only deploy key registered on the-trive/caramel-all
 # ============================================================
-CODE_REPO_TOKEN="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"
+DEPLOY_KEY_CONTENT="-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACCu8wb6S8aPraMFC/crJg/3XJnAs98tje3m6nc2IcKzFgAAAKB91H4YfdR+
+GAAAAAtzc2gtZWQyNTUxOQAAACCu8wb6S8aPraMFC/crJg/3XJnAs98tje3m6nc2IcKzFg
+AAAEAgcihJDeSsRdDYbs6HZJj8SkD+dtwilnwoW5YBkmcnJa7zBvpLxo+towUL9ysmD/dc
+mcCz3y2N7ebqdzYhwrMWAAAAG2NhcmFtZWwtdGVhbS1zZXR1cC1yZWFkb25seQEC
+-----END OPENSSH PRIVATE KEY-----"
 
 # Google Sheets 서비스 계정 키 다운로드 URL
 SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
@@ -150,16 +156,38 @@ fi
 
 echo "CLAUDE.md 생성 완료"
 
-# 4. 코드 레포 클론 (read-only PAT 방식 — GitHub 계정 불필요)
+# 4. 코드 레포 클론 (SSH deploy key 방식 — GitHub 계정 불필요)
 echo ""
 echo "=== 코드 레포 설정 ==="
 REPOS_DIR="$WORK_DIR/repos"
 mkdir -p "$REPOS_DIR"
 
+# Deploy key 설치
+DEPLOY_KEY_PATH="$HOME/.ssh/caramel-deploy-key"
+mkdir -p "$HOME/.ssh"
+echo "$DEPLOY_KEY_CONTENT" > "$DEPLOY_KEY_PATH"
+chmod 600 "$DEPLOY_KEY_PATH"
+
+# SSH config에 caramel-all 전용 호스트 등록
+SSH_CONFIG="$HOME/.ssh/config"
+if ! grep -q "caramel-all-deploy" "$SSH_CONFIG" 2>/dev/null; then
+    cat >> "$SSH_CONFIG" << SSHEOF
+
+# Caramel code repo (deploy key, read-only)
+Host caramel-all-deploy
+    HostName github.com
+    User git
+    IdentityFile $DEPLOY_KEY_PATH
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+SSHEOF
+    chmod 644 "$SSH_CONFIG"
+fi
+
 if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
     echo "caramel-all 레포를 클론합니다... (시간이 좀 걸릴 수 있습니다)"
     git clone --depth 1 --recurse-submodules --shallow-submodules \
-        "https://oauth2:${CODE_REPO_TOKEN}@github.com/the-trive/caramel-all.git" \
+        "git@caramel-all-deploy:the-trive/caramel-all.git" \
         "$REPOS_DIR/caramel-all" 2>&1 || {
         echo "WARNING: 레포 클론 실패. 나중에 다시 시도합니다."
     }

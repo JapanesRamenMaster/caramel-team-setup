@@ -12,8 +12,8 @@ CONFIG_FILE="$WORK_DIR/.setup-config"
 # === 최신 버전 (새 마이그레이션 추가 시 이 숫자를 올리고 아래에 로직 추가) ===
 LATEST_VERSION=4
 
-# Read-only PAT for code repo (setup.sh와 동일)
-CODE_REPO_TOKEN="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"
+# SSH deploy key for code repo (setup.sh와 동일)
+DEPLOY_KEY_PATH="$HOME/.ssh/caramel-deploy-key"
 
 # Google Sheets 서비스 계정 키 다운로드 URL (setup.sh와 동일)
 SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
@@ -153,13 +153,14 @@ if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then
   # --- Migration v1 → v2: 코드 레포, 날짜 마커, CLAUDE.md 역할 섹션 ---
   if [ "${CURRENT_VERSION}" -lt 2 ]; then
 
-    # 2a) 코드 레포 클론 (PAT 방식 — gh CLI 불필요)
+    # 2a) 코드 레포 클론 (SSH deploy key 방식 — GitHub 계정 불필요)
     REPOS_DIR="$WORK_DIR/repos"
     if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
-      if [ "$CODE_REPO_TOKEN" != "__REPO_TOKEN_PLACEHOLDER__" ] && [ -n "$CODE_REPO_TOKEN" ]; then
+      if [ -f "$DEPLOY_KEY_PATH" ]; then
         mkdir -p "$REPOS_DIR"
+        GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=no" \
         git clone --depth 1 --recurse-submodules --shallow-submodules \
-          "https://oauth2:${CODE_REPO_TOKEN}@github.com/the-trive/caramel-all.git" \
+          "git@github.com:the-trive/caramel-all.git" \
           "$REPOS_DIR/caramel-all" 2>/dev/null && {
           MIGRATED="$MIGRATED 코드레포"
         } || true
@@ -337,15 +338,16 @@ with open('$WORK_DIR/.mcp.json', 'w') as f:
       V4_SHEETS_OK=true
     fi
 
-    # 4d) 코드 레포가 없으면 PAT로 클론 시도 (gh CLI 불필요)
+    # 4d) 코드 레포가 없으면 deploy key로 클론 시도 (GitHub 계정 불필요)
     REPOS_DIR="$WORK_DIR/repos"
     if [ ! -d "$REPOS_DIR/caramel-all/.git" ]; then
-      if [ "$CODE_REPO_TOKEN" != "__REPO_TOKEN_PLACEHOLDER__" ] && [ -n "$CODE_REPO_TOKEN" ]; then
+      if [ -f "$DEPLOY_KEY_PATH" ]; then
         mkdir -p "$REPOS_DIR"
+        GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=no" \
         git clone --depth 1 --recurse-submodules --shallow-submodules \
-          "https://oauth2:${CODE_REPO_TOKEN}@github.com/the-trive/caramel-all.git" \
+          "git@github.com:the-trive/caramel-all.git" \
           "$REPOS_DIR/caramel-all" 2>/dev/null && {
-          MIGRATED="$MIGRATED 코드레포(PAT)"
+          MIGRATED="$MIGRATED 코드레포(SSH)"
           # CLAUDE.md에 레포 섹션 추가
           if ! grep -q "## 코드 레포" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
             if grep -q "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md"; then
