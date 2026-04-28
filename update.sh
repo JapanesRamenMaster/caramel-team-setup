@@ -5,7 +5,8 @@
 # - 버전 기반 마이그레이션으로 구조적 변경 자동 적용
 # - 매 세션 날짜 갱신
 
-INSTALL_DIR="$HOME/.caramel-team-setup"
+# 스크립트 자기 위치를 INSTALL_DIR로 사용 (어디 클론되어 있든 동작)
+INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 

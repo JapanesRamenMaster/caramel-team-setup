@@ -333,7 +333,7 @@ SKILLS_DIR="$HOME/.claude/skills"
 mkdir -p "$SKILLS_DIR"
 
 INSTALLED_SKILLS=""
-for skill_dir in "$SCRIPT_DIR/skills"/*/; do
+for skill_dir in "$INSTALL_DIR/skills"/*/; do
     [ -d "$skill_dir" ] || continue
     skill_name=$(basename "$skill_dir")
     ln -sfn "$skill_dir" "$SKILLS_DIR/$skill_name"
