@@ -266,13 +266,28 @@ DB_PORT=$DB_PORT
 DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
 DB_NAME=$DB_NAME
+
+# (선택) Grafana API 토큰 — CBR 작업/검증 도구용
+# 토큰은 #claude-setup 채널에서 확인. 비워두면 validate_one_metric.py 등 미동작.
+GRAFANA_TOKEN=
 EOF
 echo ".env 파일 생성 완료"
 
-# 5. mysql-query.sh 복사
+# 5. mysql-query.sh + mysql-cols.sh 복사
 cp "$SCRIPT_DIR/mysql-query.sh" "$WORK_DIR/mysql-query.sh"
 chmod +x "$WORK_DIR/mysql-query.sh"
 echo "mysql-query.sh 복사 완료 (읽기 전용 가드레일 포함)"
+if [ -f "$SCRIPT_DIR/mysql-cols.sh" ]; then
+    cp "$SCRIPT_DIR/mysql-cols.sh" "$WORK_DIR/mysql-cols.sh"
+    chmod +x "$WORK_DIR/mysql-cols.sh"
+fi
+# CBR/grafana 작업 도구 복사 (data-analyst role 또는 누구나 활용 가능)
+if [ -d "$SCRIPT_DIR/tools/grafana-audit" ]; then
+    mkdir -p "$WORK_DIR/tools"
+    cp -R "$SCRIPT_DIR/tools/grafana-audit" "$WORK_DIR/tools/grafana-audit"
+    chmod +x "$WORK_DIR/tools/grafana-audit/weekly_cbr_health.sh" 2>/dev/null || true
+    echo "grafana-audit 도구 복사 완료"
+fi
 
 # 6. .mcp.json 생성 (MySQL + Google Sheets)
 # Google Sheets: 서비스 계정 + 임퍼소네이션 (GOOGLE_SUBJECT = 팀원 이메일)
