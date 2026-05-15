@@ -11,7 +11,7 @@ WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 
 # === 최신 버전 (새 마이그레이션 추가 시 이 숫자를 올리고 아래에 로직 추가) ===
-LATEST_VERSION=4
+LATEST_VERSION=5
 
 # SSH deploy key for code repo (setup.sh와 동일)
 DEPLOY_KEY_PATH="$HOME/.ssh/caramel-deploy-key"
@@ -175,19 +175,53 @@ if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then
         LINE_NUM=$(grep -n "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)
         head -n $((LINE_NUM - 1)) "$WORK_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md.tmp"
         echo "" >> "$WORK_DIR/CLAUDE.md.tmp"
-        echo "## 코드 레포" >> "$WORK_DIR/CLAUDE.md.tmp"
-        echo "- \`repos/caramel-all/\` — 카라멜 전체 코드베이스 (모노레포, 5개 서브모듈)" >> "$WORK_DIR/CLAUDE.md.tmp"
-        echo "- 코드에 대한 질문이 오면 이 디렉토리에서 검색하여 답변" >> "$WORK_DIR/CLAUDE.md.tmp"
-        echo "- 코드를 수정하지 말 것 — 읽기 전용으로만 사용" >> "$WORK_DIR/CLAUDE.md.tmp"
+        cat >> "$WORK_DIR/CLAUDE.md.tmp" << 'REPOEOF'
+## 코드 레포
+
+리팩토링으로 **고객 앱은 caramel-zero**, **디테일러앱/어드민은 caramel-all** 로 분리되어 있어. 코드 질문이 오면 아래 매핑에 따라 올바른 레포부터 검색할 것.
+
+### `repos/caramel-zero/` — 신규 고객 앱 (Turborepo)
+- `apps/customer-app/` — 고객 모바일 앱 (React Native / Expo)
+- `apps/web/` — 고객 웹
+- `apps/api/` — 고객 앱 API
+- `packages/` — 공용 패키지 (date-common, refund-common, typescript-config)
+- 고객 앱·웹·API 관련 질문은 **여기를 먼저 검색**
+
+### `repos/caramel-all/` — 어드민/디테일러 (모노레포)
+- `caramel-detailer-app/` — 디테일러 앱
+- `caramel-sales-admin/` — 영업 어드민
+- 그 외 서브모듈(`caramel-app`, `caramel-api`, `careplus-web`)은 리팩토링 이전 코드 — 참조용으로만 보고, 현행 동작 확인이 필요하면 caramel-zero를 우선
+
+### 공통 규칙
+- 코드는 **읽기 전용**. 절대 수정하지 말 것
+- 어느 레포를 봐야 할지 불확실하면 사용자에게 먼저 확인
+REPOEOF
         echo "" >> "$WORK_DIR/CLAUDE.md.tmp"
         tail -n "+$LINE_NUM" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
         mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
       else
         echo "" >> "$WORK_DIR/CLAUDE.md"
-        echo "## 코드 레포" >> "$WORK_DIR/CLAUDE.md"
-        echo "- \`repos/caramel-all/\` — 카라멜 전체 코드베이스 (모노레포, 5개 서브모듈)" >> "$WORK_DIR/CLAUDE.md"
-        echo "- 코드에 대한 질문이 오면 이 디렉토리에서 검색하여 답변" >> "$WORK_DIR/CLAUDE.md"
-        echo "- 코드를 수정하지 말 것 — 읽기 전용으로만 사용" >> "$WORK_DIR/CLAUDE.md"
+        cat >> "$WORK_DIR/CLAUDE.md" << 'REPOEOF'
+## 코드 레포
+
+리팩토링으로 **고객 앱은 caramel-zero**, **디테일러앱/어드민은 caramel-all** 로 분리되어 있어. 코드 질문이 오면 아래 매핑에 따라 올바른 레포부터 검색할 것.
+
+### `repos/caramel-zero/` — 신규 고객 앱 (Turborepo)
+- `apps/customer-app/` — 고객 모바일 앱 (React Native / Expo)
+- `apps/web/` — 고객 웹
+- `apps/api/` — 고객 앱 API
+- `packages/` — 공용 패키지 (date-common, refund-common, typescript-config)
+- 고객 앱·웹·API 관련 질문은 **여기를 먼저 검색**
+
+### `repos/caramel-all/` — 어드민/디테일러 (모노레포)
+- `caramel-detailer-app/` — 디테일러 앱
+- `caramel-sales-admin/` — 영업 어드민
+- 그 외 서브모듈(`caramel-app`, `caramel-api`, `careplus-web`)은 리팩토링 이전 코드 — 참조용으로만 보고, 현행 동작 확인이 필요하면 caramel-zero를 우선
+
+### 공통 규칙
+- 코드는 **읽기 전용**. 절대 수정하지 말 것
+- 어느 레포를 봐야 할지 불확실하면 사용자에게 먼저 확인
+REPOEOF
       fi
     fi
 
@@ -355,10 +389,27 @@ with open('$WORK_DIR/.mcp.json', 'w') as f:
               LINE_NUM=$(grep -n "<!-- DATE_MARKER -->" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)
               head -n $((LINE_NUM - 1)) "$WORK_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md.tmp"
               echo "" >> "$WORK_DIR/CLAUDE.md.tmp"
-              echo "## 코드 레포" >> "$WORK_DIR/CLAUDE.md.tmp"
-              echo "- \`repos/caramel-all/\` — 카라멜 전체 코드베이스 (모노레포, 5개 서브모듈)" >> "$WORK_DIR/CLAUDE.md.tmp"
-              echo "- 코드에 대한 질문이 오면 이 디렉토리에서 검색하여 답변" >> "$WORK_DIR/CLAUDE.md.tmp"
-              echo "- 코드를 수정하지 말 것 — 읽기 전용으로만 사용" >> "$WORK_DIR/CLAUDE.md.tmp"
+              cat >> "$WORK_DIR/CLAUDE.md.tmp" << 'REPOEOF'
+## 코드 레포
+
+리팩토링으로 **고객 앱은 caramel-zero**, **디테일러앱/어드민은 caramel-all** 로 분리되어 있어. 코드 질문이 오면 아래 매핑에 따라 올바른 레포부터 검색할 것.
+
+### `repos/caramel-zero/` — 신규 고객 앱 (Turborepo)
+- `apps/customer-app/` — 고객 모바일 앱 (React Native / Expo)
+- `apps/web/` — 고객 웹
+- `apps/api/` — 고객 앱 API
+- `packages/` — 공용 패키지 (date-common, refund-common, typescript-config)
+- 고객 앱·웹·API 관련 질문은 **여기를 먼저 검색**
+
+### `repos/caramel-all/` — 어드민/디테일러 (모노레포)
+- `caramel-detailer-app/` — 디테일러 앱
+- `caramel-sales-admin/` — 영업 어드민
+- 그 외 서브모듈(`caramel-app`, `caramel-api`, `careplus-web`)은 리팩토링 이전 코드 — 참조용으로만 보고, 현행 동작 확인이 필요하면 caramel-zero를 우선
+
+### 공통 규칙
+- 코드는 **읽기 전용**. 절대 수정하지 말 것
+- 어느 레포를 봐야 할지 불확실하면 사용자에게 먼저 확인
+REPOEOF
               echo "" >> "$WORK_DIR/CLAUDE.md.tmp"
               tail -n "+$LINE_NUM" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
               mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
@@ -408,6 +459,64 @@ SHEETSEOF
         tail -n "+$LINE_NUM" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
         mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
         MIGRATED="$MIGRATED Sheets이메일섹션"
+      fi
+    fi
+  fi
+
+  # --- Migration v4 → v5: 고객 앱 분리 (caramel-zero 추가) ---
+  if [ "${CURRENT_VERSION}" -lt 5 ]; then
+    REPOS_DIR="$WORK_DIR/repos"
+
+    # 5a) caramel-zero 클론 (없으면)
+    if [ ! -d "$REPOS_DIR/caramel-zero/.git" ]; then
+      ZERO_KEY_PATH="$HOME/.ssh/caramel-deploy-caramel-zero"
+      if [ -f "$ZERO_KEY_PATH" ]; then
+        mkdir -p "$REPOS_DIR"
+        GIT_SSH_COMMAND="ssh -i $ZERO_KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=no" \
+        git clone --depth 1 \
+          "git@github.com:the-trive/caramel-zero.git" \
+          "$REPOS_DIR/caramel-zero" 2>/dev/null && {
+          MIGRATED="$MIGRATED caramel-zero"
+        } || true
+      else
+        echo "WARNING: caramel-zero deploy key 미존재. 수동으로 한 번만 클론하세요:"
+        echo "  cd $REPOS_DIR && git clone git@github.com:the-trive/caramel-zero.git"
+      fi
+    fi
+
+    # 5b) CLAUDE.md '## 코드 레포' 섹션을 신규 형식으로 교체 (caramel-zero 미언급 시 = 구버전)
+    if [ -f "$WORK_DIR/CLAUDE.md" ] && grep -q "^## 코드 레포" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
+      if ! grep -q "caramel-zero" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
+        START_LINE=$(grep -n "^## 코드 레포" "$WORK_DIR/CLAUDE.md" | head -1 | cut -d: -f1)
+        END_LINE=$(awk -v s="$START_LINE" 'NR>s && (/^## / || /^<!-- DATE_MARKER -->/) {print NR; exit}' "$WORK_DIR/CLAUDE.md")
+        if [ -n "$START_LINE" ] && [ -n "$END_LINE" ]; then
+          head -n $((START_LINE - 1)) "$WORK_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md.tmp"
+          cat >> "$WORK_DIR/CLAUDE.md.tmp" << 'REPOEOF'
+## 코드 레포
+
+리팩토링으로 **고객 앱은 caramel-zero**, **디테일러앱/어드민은 caramel-all** 로 분리되어 있어. 코드 질문이 오면 아래 매핑에 따라 올바른 레포부터 검색할 것.
+
+### `repos/caramel-zero/` — 신규 고객 앱 (Turborepo)
+- `apps/customer-app/` — 고객 모바일 앱 (React Native / Expo)
+- `apps/web/` — 고객 웹
+- `apps/api/` — 고객 앱 API
+- `packages/` — 공용 패키지 (date-common, refund-common, typescript-config)
+- 고객 앱·웹·API 관련 질문은 **여기를 먼저 검색**
+
+### `repos/caramel-all/` — 어드민/디테일러 (모노레포)
+- `caramel-detailer-app/` — 디테일러 앱
+- `caramel-sales-admin/` — 영업 어드민
+- 그 외 서브모듈(`caramel-app`, `caramel-api`, `careplus-web`)은 리팩토링 이전 코드 — 참조용으로만 보고, 현행 동작 확인이 필요하면 caramel-zero를 우선
+
+### 공통 규칙
+- 코드는 **읽기 전용**. 절대 수정하지 말 것
+- 어느 레포를 봐야 할지 불확실하면 사용자에게 먼저 확인
+
+REPOEOF
+          tail -n "+$END_LINE" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
+          mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
+          MIGRATED="$MIGRATED 코드레포-v5"
+        fi
       fi
     fi
   fi
