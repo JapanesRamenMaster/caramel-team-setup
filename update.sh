@@ -22,7 +22,9 @@ SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjp
 cd "$INSTALL_DIR" || exit 0
 
 # 1) Pull 전 상태 저장
-OLD_HEAD=$(git rev-parse HEAD 2>/dev/null)
+#    재실행된 프로세스에선 env로 넘겨받은 원래 OLD_HEAD를 우선 사용한다.
+#    (안 그러면 pull 이후 rev-parse가 NEW와 같아져서 아래 전파 블록이 통째로 스킵됨 — 과거 버그)
+OLD_HEAD="${CARAMEL_OLD_HEAD:-$(git rev-parse HEAD 2>/dev/null)}"
 
 # 2) Pull (fast-forward only, 충돌 방지)
 git pull --ff-only 2>/dev/null || true
@@ -31,11 +33,12 @@ git pull --ff-only 2>/dev/null || true
 NEW_HEAD=$(git rev-parse HEAD 2>/dev/null)
 
 if [ "$OLD_HEAD" != "$NEW_HEAD" ] && [ "${CARAMEL_UPDATE_REEXEC:-}" != "1" ]; then
-  # update.sh 자체가 변경되었을 수 있으므로 새 버전으로 재실행
+  # update.sh 자체가 변경됐을 수 있으므로 새 버전으로 재실행. OLD_HEAD를 넘겨 전파가 스킵되지 않게 함.
   export CARAMEL_UPDATE_REEXEC=1
+  export CARAMEL_OLD_HEAD="$OLD_HEAD"
   exec "$INSTALL_DIR/update.sh" "$@"
 fi
-unset CARAMEL_UPDATE_REEXEC
+unset CARAMEL_UPDATE_REEXEC CARAMEL_OLD_HEAD
 
 if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
   # 4) 스킬 심링크 재생성 (새 스킬 포함)
@@ -68,6 +71,16 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
   git log --oneline "$OLD_HEAD".."$NEW_HEAD" | while read line; do
     echo "  $line"
   done
+fi
+
+# 6.5) CLAUDE.md (재)생성 — 베이스 규칙 전파(HEAD 변경) 또는 마커 없음(legacy/깨짐) 시 자가복구.
+#      역할은 .setup-config에서 보존, 개인 메모는 END 마커 아래 보존. (build-claude-md.sh)
+if [ -d "$WORK_DIR" ] && [ -f "$INSTALL_DIR/build-claude-md.sh" ]; then
+  if [ "$OLD_HEAD" != "$NEW_HEAD" ] || ! grep -qF "TEAM-SETUP:BEGIN" "$WORK_DIR/CLAUDE.md" 2>/dev/null; then
+    ROLE_CFG=""
+    [ -f "$CONFIG_FILE" ] && ROLE_CFG=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
+    bash "$INSTALL_DIR/build-claude-md.sh" "$INSTALL_DIR" "$WORK_DIR" "$ROLE_CFG" >&2 || true
+  fi
 fi
 
 # ============================================================

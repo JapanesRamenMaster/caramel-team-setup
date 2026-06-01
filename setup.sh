@@ -125,29 +125,9 @@ if [ -d "$WORK_DIR" ]; then
 fi
 mkdir -p "$WORK_DIR"
 
-# 3. CLAUDE.md 생성 (공통 + 역할 컨텍스트)
+# 3. CLAUDE.md 생성 (build-claude-md.sh — setup/update 공통 로직, 역할·개인메모 보존)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cat "$SCRIPT_DIR/CLAUDE.md" > "$WORK_DIR/CLAUDE.md"
-
-# 역할 기록
-echo "" >> "$WORK_DIR/CLAUDE.md"
-echo "## 이 사용자의 역할" >> "$WORK_DIR/CLAUDE.md"
-echo "이 사용자는 카라멜 팀에서 **${ROLE}** 역할을 맡고 있습니다. 이 역할에 맞게 답변을 조정하세요." >> "$WORK_DIR/CLAUDE.md"
-
-# 역할별 추가 규칙 (매칭되는 파일이 있으면 추가)
-ROLE_LOWER=$(echo "$ROLE" | tr '[:upper:]' '[:lower:]')
-ROLE_FILE=""
-case "$ROLE_LOWER" in
-    cs) ROLE_FILE="$SCRIPT_DIR/roles/cs.md" ;;
-    마케팅|marketing) ROLE_FILE="$SCRIPT_DIR/roles/marketing.md" ;;
-    운영|operations) ROLE_FILE="$SCRIPT_DIR/roles/operations.md" ;;
-esac
-
-if [ -n "$ROLE_FILE" ] && [ -f "$ROLE_FILE" ]; then
-    echo "" >> "$WORK_DIR/CLAUDE.md"
-    cat "$ROLE_FILE" >> "$WORK_DIR/CLAUDE.md"
-fi
-
+bash "$SCRIPT_DIR/build-claude-md.sh" "$SCRIPT_DIR" "$WORK_DIR" "$ROLE"
 echo "CLAUDE.md 생성 완료"
 
 # 4. 코드 레포 클론 (SSH deploy key 방식 — GitHub 계정 불필요)
@@ -247,31 +227,7 @@ fi
 # Deploy keys 임시 파일 정리
 rm -rf "$DEPLOY_KEYS_TMP"
 
-# CLAUDE.md에 레포 경로 추가
-if [ -d "$REPOS_DIR/caramel-all/.git" ]; then
-    echo "" >> "$WORK_DIR/CLAUDE.md"
-    cat >> "$WORK_DIR/CLAUDE.md" << 'REPOEOF'
-## 코드 레포
-
-리팩토링으로 **고객 앱은 caramel-zero**, **디테일러앱/어드민은 caramel-all** 로 분리되어 있어. 코드 질문이 오면 아래 매핑에 따라 올바른 레포부터 검색할 것.
-
-### `repos/caramel-zero/` — 신규 고객 앱 (Turborepo)
-- `apps/customer-app/` — 고객 모바일 앱 (React Native / Expo)
-- `apps/web/` — 고객 웹
-- `apps/api/` — 고객 앱 API
-- `packages/` — 공용 패키지 (date-common, refund-common, typescript-config)
-- 고객 앱·웹·API 관련 질문은 **여기를 먼저 검색**
-
-### `repos/caramel-all/` — 어드민/디테일러 (모노레포)
-- `caramel-detailer-app/` — 디테일러 앱
-- `caramel-sales-admin/` — 영업 어드민
-- 그 외 서브모듈(`caramel-app`, `caramel-api`, `careplus-web`)은 리팩토링 이전 코드 — 참조용으로만 보고, 현행 동작 확인이 필요하면 caramel-zero를 우선
-
-### 공통 규칙
-- 코드는 **읽기 전용**. 절대 수정하지 말 것
-- 어느 레포를 봐야 할지 불확실하면 사용자에게 먼저 확인
-REPOEOF
-fi
+# 코드 레포 섹션은 build-claude-md.sh가 항상 포함하므로 여기서 따로 추가하지 않음
 
 # 5. DB 접속 정보 (읽기 전용 유저 — 조회만 가능)
 DB_PORT=3306
@@ -529,11 +485,7 @@ EMAIL="$ARG_EMAIL"
 CONFIGEOF
 echo "설정 저장 완료 (.setup-config)"
 
-# 11. 현재 날짜를 CLAUDE.md에 추가 (모델이 날짜를 정확히 인식하도록)
-echo "" >> "$WORK_DIR/CLAUDE.md"
-echo "<!-- DATE_MARKER -->" >> "$WORK_DIR/CLAUDE.md"
-echo "## 현재 날짜" >> "$WORK_DIR/CLAUDE.md"
-echo "오늘은 $(date '+%Y년 %m월 %d일')입니다. 날짜 관련 질문이나 쿼리에서 이 날짜를 기준으로 하세요." >> "$WORK_DIR/CLAUDE.md"
+# 11. 현재 날짜 섹션은 build-claude-md.sh가 이미 추가함 (DATE_MARKER). 매 세션 update.sh가 갱신.
 
 # 12. DB 연결 테스트
 echo ""
