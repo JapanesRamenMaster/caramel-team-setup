@@ -57,6 +57,16 @@ Caramel(카라멜) 세차 서비스 플랫폼의 Grafana 대시보드에 있는 
 - description 필드에 지표 설명 포함
 - 복제 원본: Panel 86 (주간 barchart), Panel 87 (월간 timeseries)
 
+## 대시보드 저장 규칙 (절대 준수)
+
+CBR 대시보드 4개 + legacy `ju46j5j`는 모두 **`🔥 팀 대시보드 🔥`** 폴더(`folderUid: eefeyl9nunqiof`)에 속한다. `POST /api/dashboards/db`는 `folderUid` 생략 시 General로 떨어뜨려서 폴더에서 튕긴다 — 매번 같은 실수가 반복됨.
+
+**정책:**
+- 대시보드 저장은 **무조건 `grafana_save.py` 헬퍼 사용**. inline urllib `POST /api/dashboards/db` 금지.
+- 헬퍼는 (1) `meta.folderUid` 자동 주입, (2) CBR UID는 팀 폴더 아니면 저장 거부, (3) 저장 후 re-fetch로 폴더 유지 검증한다.
+- 저장 후 항상 `python3 grafana-audit/grafana_save.py verify` 실행 (exit 0 확인).
+- 사용 예: `from grafana_save import fetch, save, create, TEAM_FOLDER_UID`
+
 ## 작업 스타일
 
 - 결론 먼저, 근거 뒤에

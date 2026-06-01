@@ -52,7 +52,7 @@ CBR은 아마존 WBR 방식으로 재설계됨. **Input metric 중심 + Owner �
 3. **사용 예** (생성/수정 모두):
    ```python
    import sys
-   sys.path.insert(0, "grafana-audit")  # 프로젝트 루트 기준 상대경로
+   sys.path.insert(0, "grafana-audit")
    from grafana_save import fetch, save, create, TEAM_FOLDER_UID
 
    # 수정
@@ -141,7 +141,7 @@ CBR은 아마존 WBR 방식으로 재설계됨. **Input metric 중심 + Owner �
 ### Phase 4: 검증 (Validate)
 
 ```bash
-./mysql-query.sh "생성된SQL"
+mysql-query.sh "생성된SQL"
 ```
 - 결과가 나오는지 확인
 - 기존 Grafana 패널 수치와 크로스체크 (가능한 경우)
@@ -628,5 +628,5 @@ ORDER BY cbr_cutoff_wrap.`time`
 | `grafana-audit/all_queries_v93.json` | 기존 CBR 패널 쿼리 전체 덤프 |
 | `grafana-audit/cbr-queries/` | 생성된 쿼리 저장소 |
 
-모든 경로는 작업 폴더(프로젝트 루트) 기준 상대경로.
-mysql-query.sh 경로: `./mysql-query.sh`
+모든 경로는 프로젝트 루트 `` 기준.
+mysql-query.sh 경로: `mysql-query.sh`

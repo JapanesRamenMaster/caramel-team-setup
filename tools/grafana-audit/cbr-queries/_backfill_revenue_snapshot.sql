@@ -1,4 +1,4 @@
-INSERT INTO cbr_daily_revenue_snapshot (date, total_revenue, completed_washes)
+INSERT INTO cbr_daily_revenue_snapshot (date, total_revenue, completed_washes, revenue_onetime, washes_onetime, revenue_sub, washes_sub)
 WITH live_users AS (
   SELECT id FROM app_user
   WHERE deleted_yn = 0 AND test_yn = 0 AND temp_yn = 0
@@ -19,7 +19,7 @@ washed_reservations AS (
 ),
 us_base AS (
   SELECT us.id AS user_service_id, us.reservation_id, us.payment_id,
-         us.product_id, us.service_id, s.price AS service_price
+         us.product_id, us.service_id, us.subscription_id, s.price AS service_price
   FROM user_service us
   JOIN washed_reservations wr ON wr.id = us.reservation_id
   JOIN service s ON s.id = us.service_id
@@ -124,14 +124,30 @@ reservation_revenue AS (
   SELECT reservation_id, SUM(base_price - point_alloc) AS sale_total
   FROM items_with_point
   GROUP BY reservation_id
+),
+res_kind AS (
+  -- 한 reservation에 구독권 user_service가 하나라도 있으면 '구독', 없으면 '1회권'
+  SELECT us.reservation_id,
+         MAX(CASE WHEN us.subscription_id IS NOT NULL THEN 1 ELSE 0 END) AS is_sub
+  FROM us_base us
+  GROUP BY us.reservation_id
 )
 SELECT
   DATE(DATE_ADD(r.reservation_datetime, INTERVAL 9 HOUR)) AS date,
   ROUND(SUM(rv.sale_total)) AS total_revenue,
-  COUNT(DISTINCT rv.reservation_id) AS completed_washes
+  COUNT(DISTINCT rv.reservation_id) AS completed_washes,
+  ROUND(SUM(CASE WHEN COALESCE(rk.is_sub, 0) = 0 THEN rv.sale_total ELSE 0 END)) AS revenue_onetime,
+  COUNT(DISTINCT CASE WHEN COALESCE(rk.is_sub, 0) = 0 THEN rv.reservation_id END) AS washes_onetime,
+  ROUND(SUM(CASE WHEN COALESCE(rk.is_sub, 0) = 1 THEN rv.sale_total ELSE 0 END)) AS revenue_sub,
+  COUNT(DISTINCT CASE WHEN COALESCE(rk.is_sub, 0) = 1 THEN rv.reservation_id END) AS washes_sub
 FROM reservation_revenue rv
 JOIN reservation r ON r.id = rv.reservation_id
+LEFT JOIN res_kind rk ON rk.reservation_id = rv.reservation_id
 GROUP BY date
 ON DUPLICATE KEY UPDATE
   total_revenue = VALUES(total_revenue),
-  completed_washes = VALUES(completed_washes);
+  completed_washes = VALUES(completed_washes),
+  revenue_onetime = VALUES(revenue_onetime),
+  washes_onetime = VALUES(washes_onetime),
+  revenue_sub = VALUES(revenue_sub),
+  washes_sub = VALUES(washes_sub);

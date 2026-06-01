@@ -16,11 +16,23 @@ description: "디테일러 zone 변경 (예: Z1 → Z3). Use when: zone 변경, 
 
 ## DB 쿼리 방법
 
-- 조회: `./mysql-query.sh "SQL"` 로 실행 (워크스페이스 루트 기준)
-- 쓰기(Step 7만): `./mysql-query.sh --allow-zone-change "SQL"` 로 실행
-- DateTime은 UTC 저장 → KST 변환 시 `+ INTERVAL 9 HOUR`
-- **이 스킬에서만** `detailer_work_schedule_rule` 테이블의 UPDATE(soft-delete)/INSERT 허용
+- 조회/쓰기 모두: `./mysql-query.sh "SQL"` (워크스페이스 루트 기준)
+- wrapper 자체에 가드는 없다 — 쓰기 안전성은 이 스킬의 프로토콜이 보증
+- DateTime은 UTC 저장. **schedule lookup 매칭은 UTC 기준이므로 표시용 외에는 KST로 변환하지 말 것** (코드: `effective_from <= date AND effective_to >= date`, `date`는 dayjs UTC 자정)
+- **이 스킬에서만** `detailer_work_schedule_rule` 테이블의 UPDATE/INSERT 허용
 - 다른 테이블은 절대 수정 금지
+
+## 캐시 주의
+
+`DetailerScheduleManager.fetchWorkSchedulesBase`에 `@Cacheable({ ttl: 180 })`. 변경 후 최대 3분까지 매칭 로직에 안 보일 수 있음. 사용자에게 안내할 것.
+
+## detailer_work_schedule.type 컬럼
+
+- `DEFAULT` — 일반 schedule. schedule manager에서 매칭됨.
+- `BANYAN_TREE` — 반얀트리 주소 전용. 주소가 반얀트리일 때만 매칭.
+- `HEY_DEALER` — schedule manager에서 **fetch 안 됨** (filter out). 즉 디테일러가 외부 사업(헤이딜러 등)으로 빠진 마커. 5/8 이후 type=HEY_DEALER + rule 없음 = 시스템 배정 자동 제외.
+
+Step 3에서 type을 항상 함께 조회해서 사용자에게 표시할 것.
 
 ## 안전 규칙
 
@@ -83,10 +95,13 @@ WHERE (d.name = '{input}' OR d.phone = '{input}')
 - **`dss.status = '파견'`**: "파견 상태 디테일러입니다. zone 변경이 적절한지 확인하세요." → AskUserQuestion으로 계속 여부 확인
 - **`dss.status` ∉ ('현직', '파견')**: "현직이 아닌 디테일러입니다 (상태: {status})" 중단
 
-### Step 3: 현재 zone + 활성 스케줄 조회
+### Step 3: 현재 + **미래** schedule 전체 조회
+
+> **중요**: 활성 schedule 하나만 보지 말 것. 미래 schedule이 이미 분할되어 있을 수 있다 (cutover, type 전환 등). 영구 변경 vs 단일 schedule만 영향 vs 임시 변경(Step 3.5) 판단을 위해 전체를 본다.
 
 ```sql
-SELECT dws.id AS schedule_id, dws.effective_from, dws.effective_to,
+SELECT dws.id AS schedule_id, dws.type AS schedule_type,
+       dws.effective_from, dws.effective_to,
        dwsr.id AS rule_id, dwsr.day_of_week,
        DATE_FORMAT(dwsr.start_time, '%Y-%m-%d %H:%i:%s') AS start_time_raw,
        DATE_FORMAT(dwsr.end_time, '%Y-%m-%d %H:%i:%s') AS end_time_raw,
@@ -95,18 +110,39 @@ SELECT dws.id AS schedule_id, dws.effective_from, dws.effective_to,
        dwsr.zone_id, z.name AS zone_name,
        dwsr.service_region_group_id
 FROM detailer_work_schedule dws
-JOIN detailer_work_schedule_rule dwsr ON dwsr.schedule_id = dws.id
+LEFT JOIN detailer_work_schedule_rule dwsr
+  ON dwsr.schedule_id = dws.id AND dwsr.deleted_at IS NULL
 LEFT JOIN zone z ON z.id = dwsr.zone_id
 WHERE dws.detailer_id = {detailer_id}
-  AND dws.effective_from <= NOW() AND dws.effective_to >= NOW()
-  AND dwsr.deleted_at IS NULL
-ORDER BY FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FRI','SAT','SUN');
+  AND dws.effective_to >= NOW()
+ORDER BY dws.effective_from, FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FRI','SAT','SUN');
 ```
 
 **검증 규칙**:
-- **활성 스케줄 없음** (결과 0건): "활성 스케줄이 없습니다. 개발팀에 문의하세요." 중단
+- **활성 + 미래 schedule 없음** (결과 0건): "활성 스케줄이 없습니다. 개발팀에 문의하세요." 중단
 - **zone_id가 전부 NULL** (legacy): "이 디테일러는 zone 기반이 아닙니다 (service_region_group 사용 중). 개발팀에 zone 전환을 요청하세요." 중단
+- **schedule이 여러 개로 분할되어 있음**: 표시 후 Step 3.5로 진행 (영구 vs 임시 vs 분할 schedule 단위 변경)
 - **여러 zone에 배정** (겸임): 요일별 zone 표시 + AskUserQuestion으로 "어떤 요일의 zone을 변경할까요?" (전체/평일/주말/특정요일) 선택
+- **type=HEY_DEALER schedule 존재**: 사용자에게 명시 — "이 디테일러는 {effective_from}부터 type=HEY_DEALER로 시스템 배정에서 자동 제외됩니다. 이번 변경이 필요한 기간을 확인하세요."
+
+### Step 3.5: 변경 범위 결정 (분할 schedule 또는 임시 변경)
+
+schedule이 여러 개로 분할되어 있거나 사용자가 특정 날짜만 임시 변경 의도이면, 어느 schedule의 어느 rule을 건드릴지 명확히 한다.
+
+**판단 트리**:
+
+1. 사용자 의도가 **특정 날짜 1회**인가? (예: "이번주 목요일만")
+   - 해당 날짜에 매칭되는 schedule을 식별 (`effective_from <= 자정UTC AND effective_to >= 자정UTC`)
+   - 해당 schedule의 해당 요일 rule만 단일 UPDATE → **간이 모드**로 진행 (Step 7-simple)
+
+2. 사용자 의도가 **영구 변경**인가? (예: "이제부터 Z3에서")
+   - 활성 schedule만 대상 → 표준 7단계 (Step 7a/b/c/d) 그대로
+
+3. 미래 schedule이 분할되어 있고 사용자 의도가 **현재부터 ~ 분할 시점까지만**이라면?
+   - 현재 활성 schedule만 대상 → 표준 7단계
+   - 미래 schedule은 건드리지 않는다 (이유: cutover 의도가 다른 사람이 만든 거일 수 있음 — 사용자에게 확인)
+
+**필수 출력**: 발견한 모든 schedule을 표로 보여주고 어느 것을 건드릴지 명확히 합의.
 
 **출력 — 현재 배정 상태**:
 
@@ -187,10 +223,38 @@ AskUserQuestion으로 확인. 선택지:
 
 **사용자가 "취소"하면 즉시 중단. "실행"에만 진행.**
 
-### Step 7: 실행 + 검증 + 롤백 안내
+### Step 7-simple: 임시 변경 (특정 날짜 1회) — 단일 rule UPDATE
 
-> **중요**: Step 7의 모든 UPDATE/INSERT 쿼리는 반드시 `./mysql-query.sh --allow-zone-change "SQL"` 형태로 실행한다.
-> 플래그 없이 실행하면 가드레일에 의해 차단된다.
+Step 3.5에서 "특정 날짜 1회" 케이스로 결정되었을 때만 사용한다.
+
+```sql
+UPDATE detailer_work_schedule_rule
+SET zone_id = {new_zone_id}, modified_at = NOW()
+WHERE id = {target_rule_id} AND deleted_at IS NULL;
+```
+
+검증:
+```sql
+SELECT id, schedule_id, day_of_week, zone_id, modified_at
+FROM detailer_work_schedule_rule WHERE id = {target_rule_id};
+```
+
+롤백:
+```sql
+UPDATE detailer_work_schedule_rule
+SET zone_id = {original_zone_id}, modified_at = NOW()
+WHERE id = {target_rule_id};
+```
+
+이 케이스는 단일 schedule + 단일 요일 rule에만 영향. soft-delete + INSERT 패턴은 불필요 (그렇게 하면 history는 늘지만 본질은 동일).
+
+원복 자동화 여부 판단:
+- 해당 schedule이 1주일 이내 effective_to → 자연 종료, 원복 불필요
+- 해당 schedule이 영구(2099 등) → 사용자에게 명시 + 다음주 변경일에 원복 schedule 안내
+
+### Step 7: 실행 + 검증 + 롤백 안내 (영구 변경 / 표준 케이스)
+
+표준 케이스 (Step 3.5에서 영구 변경 또는 활성 schedule 전체 zone 변경)에 사용.
 
 #### Step 7a: 기존 규칙 soft-delete
 
@@ -260,9 +324,9 @@ ORDER BY FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FRI','SAT','SUN');
 ### 롤백이 필요한 경우
 아래 명령어를 순서대로 실행하면 이전 상태로 되돌릴 수 있습니다:
 
-./mysql-query.sh --allow-zone-change "UPDATE detailer_work_schedule_rule SET deleted_at = NOW() WHERE id IN ({new_rule_ids})"
+./mysql-query.sh "UPDATE detailer_work_schedule_rule SET deleted_at = NOW() WHERE id IN ({new_rule_ids})"
 
-./mysql-query.sh --allow-zone-change "UPDATE detailer_work_schedule_rule SET deleted_at = NULL WHERE id IN ({old_rule_ids})"
+./mysql-query.sh "UPDATE detailer_work_schedule_rule SET deleted_at = NULL WHERE id IN ({old_rule_ids})"
 ```
 
 - `{new_rule_ids}` = Step 7c 검증 쿼리에서 확인한 새 규칙 ID 목록
@@ -280,6 +344,9 @@ ORDER BY FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FRI','SAT','SUN');
 | 파견 상태 | Step 2 | 경고 + 확인 |
 | 활성 스케줄 없음 | Step 3 | 중단 |
 | legacy (zone 미전환) | Step 3 | 중단 |
+| 미래 schedule 분할 존재 | Step 3 | Step 3.5에서 범위 결정 |
+| HEY_DEALER schedule 존재 | Step 3 | 사용자 명시 + 영향 기간 확인 |
+| 임시 변경 (특정 날짜 1회) | Step 3.5 | Step 7-simple로 단일 rule UPDATE |
 | 겸임 (복수 zone) | Step 3 | 범위 선택 |
 | 존재하지 않는 zone | Step 4 | 목록 표시 + 재질문 |
 | 현재 = 목표 zone | Step 4 | 중단 |
@@ -287,3 +354,14 @@ ORDER BY FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FRI','SAT','SUN');
 | affected rows 불일치 | Step 7a | 경고 + 중단 |
 | INSERT 실패 | Step 7b | 에러 + 복원 SQL |
 | 검증 실패 | Step 7c | 경고 + 롤백 SQL |
+
+---
+
+## 부록: 스케줄 시스템 동작 메모
+
+- **schedule lookup**: `prisma.detailer_work_schedule.findMany({ where: { effective_from: { lte: date }, effective_to: { gte: date }, type } })`. `type` 필터에 `DEFAULT` 또는 `BANYAN_TREE`만 들어감.
+- **date 인자**: 호출자가 `dayjs(fromDate).startOf('day').toISOString()`으로 만든 UTC 자정 기준. 즉 lookup 비교는 UTC 그대로.
+- **rule 매칭**: 같은 schedule 내에서 `day_of_week === dayOfWeek(date)` (즉 KST가 아닌 dayjs 기본 timezone 기준의 요일).
+- **rule.start_time/end_time**: `1970-01-01 HH:MM:SS` 형태. 코드는 `hour()`, `minute()`만 추출하여 해당 일자에 적용. 정상 데이터는 UTC 시간으로 저장 (예: 01:00~10:00 UTC = 10:00~19:00 KST).
+- **캐시**: `Cacheable({ ttl: 180 })` — 변경 후 최대 3분 반영 지연.
+- **schedule 분할 패턴**: type 전환(예: DEFAULT → HEY_DEALER), 일시적 zone/시간 변경 등으로 schedule이 여러 개로 분할되어 있는 경우가 흔함. `effective_to >= NOW()` 전체를 봐야 함.
