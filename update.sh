@@ -47,12 +47,20 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
     ln -sfn "$skill_dir" "$SKILLS_DIR/$skill_name"
   done
 
-  # 5) 참조 문서 + mysql-query.sh 업데이트
+  # 5) 참조 문서 + 헬퍼 스크립트 + grafana-audit 도구 업데이트
   if [ -d "$WORK_DIR" ]; then
     cp "$INSTALL_DIR/QUERY_REFERENCE.md" "$WORK_DIR/" 2>/dev/null || true
     cp "$INSTALL_DIR/DB_SCHEMA.md" "$WORK_DIR/" 2>/dev/null || true
     cp "$INSTALL_DIR/mysql-query.sh" "$WORK_DIR/mysql-query.sh" 2>/dev/null || true
     chmod +x "$WORK_DIR/mysql-query.sh" 2>/dev/null || true
+    cp "$INSTALL_DIR/mysql-cols.sh" "$WORK_DIR/mysql-cols.sh" 2>/dev/null || true
+    chmod +x "$WORK_DIR/mysql-cols.sh" 2>/dev/null || true
+    # grafana-audit 도구 (CBR 작업용) — setup.sh와 동일하게 매 업데이트마다 갱신
+    if [ -d "$INSTALL_DIR/tools/grafana-audit" ]; then
+      mkdir -p "$WORK_DIR/tools/grafana-audit"
+      cp -R "$INSTALL_DIR/tools/grafana-audit/." "$WORK_DIR/tools/grafana-audit/" 2>/dev/null || true
+      chmod +x "$WORK_DIR/tools/grafana-audit/"*.sh 2>/dev/null || true
+    fi
   fi
 
   # 6) 변경사항 요약 출력 (Claude Code에 표시됨)
