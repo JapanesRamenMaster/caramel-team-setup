@@ -38,6 +38,33 @@ CBR은 아마존 WBR 방식으로 재설계됨. **Input metric 중심 + Owner �
 | **제품 drill-down** | `488a461e-1d76-4de1-b332-e1ae74337171` | 화요일 제품팀 사전 리뷰 | purple |
 | **오토랩 drill-down** | `c0151105-1e38-40b6-a080-b58594bf2c02` | 화요일 오토랩팀 사전 리뷰 | orange |
 
+**⚠️ 폴더 규칙 (절대 준수 — 정책화됨)**: 위 4개 대시보드와 legacy `ju46j5j`는 모두 **`🔥 팀 대시보드 🔥`** 폴더(`folderUid: eefeyl9nunqiof`)에 속한다. 신규 CBR 관련 대시보드도 무조건 이 폴더.
+
+**Why:** `POST /api/dashboards/db` 호출 시 `folderUid`를 생략하면 Grafana가 기본값 `""`(General)로 처리해 기존 폴더에서 튕겨나간다. 매번 같은 실수가 반복됨 (2026-05-27 컴플레인).
+
+**How to apply (DO NOT skip — 정책):**
+1. **모든 dashboard 저장은 반드시 `grafana-audit/grafana_save.py` 헬퍼를 통해서만 한다.** inline urllib로 `POST /api/dashboards/db`를 직접 치지 말 것. 헬퍼는:
+   - 기존 대시보드: `meta.folderUid`를 payload에 자동 주입
+   - 신규 대시보드: `folder_uid` 인자가 필수 (안 주면 ValueError)
+   - CBR UID 화이트리스트: 팀 폴더가 아니면 **저장 거부**
+   - 저장 후 자동 re-fetch로 폴더 유지 검증
+2. **저장 후 매번** `python3 grafana-audit/grafana_save.py verify` 실행 → 4개 + legacy 전부 팀 폴더에 있는지 확인. exit code 0이어야 함.
+3. **사용 예** (생성/수정 모두):
+   ```python
+   import sys
+   sys.path.insert(0, "grafana-audit")  # 프로젝트 루트 기준 상대경로
+   from grafana_save import fetch, save, create, TEAM_FOLDER_UID
+
+   # 수정
+   d = fetch("7039d06f-e206-4a06-99bc-b215451176b0")
+   # ... d["dashboard"]["panels"] 등 편집 ...
+   save(d, message="add foo panel")
+
+   # 신규 (CBR)
+   create(dashboard_json, folder_uid=TEAM_FOLDER_UID, message="new CBR board")
+   ```
+- Grafana 폴더 링크: https://thetrive.grafana.net/dashboards/f/eefeyl9nunqiof/?orgId=1
+
 기존 단일 대시보드 `ju46j5j`도 살아있지만 legacy. 새 패널은 위 4개 중 하나에 추가.
 
 ### 새 메트릭 추가 시 어느 대시보드?
@@ -114,7 +141,7 @@ CBR은 아마존 WBR 방식으로 재설계됨. **Input metric 중심 + Owner �
 ### Phase 4: 검증 (Validate)
 
 ```bash
-/Users/trive/claude/mysql-query.sh "생성된SQL"
+./mysql-query.sh "생성된SQL"
 ```
 - 결과가 나오는지 확인
 - 기존 Grafana 패널 수치와 크로스체크 (가능한 경우)
@@ -134,15 +161,15 @@ CBR은 아마존 WBR 방식으로 재설계됨. **Input metric 중심 + Owner �
 **⚠️ 쿼리 파일 저장으로 끝내지 말 것. Grafana 대시보드에 패널 추가까지가 업무 마무리.**
 
 1. **어느 대시보드에 추가할지 §0 가이드로 결정** (톱레벨 vs 팀 drill-down)
-2. Grafana API로 해당 대시보드 JSON 가져오기 (UID는 §0 표 참고)
+2. **`grafana_save.fetch(uid)`로** 해당 대시보드 JSON 가져오기 (UID는 §0 표 참고). inline urllib 금지.
 3. 추가할 섹션(row)이 있으면 그 row 바로 아래, 없으면 신규 row 만든 뒤 그 아래에 배치
 4. 패널 스타일: 기존 패널 복제 (6w=barchart w=8 x=0, 12m=timeseries w=16 x=8, h=14)
 5. **컬러는 대시보드 컨벤션에 맞춤** (§0 표):
    - 톱레벨: 섹션 컬러 (Output=green, 마케팅=blue, 제품=purple, 오토랩=orange)
    - 팀 drill-down: 해당 팀 컬러로 통일 (palette-classic 쓰지 말 것)
 6. **y축 min=0 설정**, 하드코딩된 max 사용 금지 (성장 시 클리핑됨)
-7. 대시보드 저장 API 호출 (`overwrite: true`)
-8. 결과 확인 후 사용자에게 보고
+7. **`grafana_save.save(dash_obj, message=...)`로 저장.** 헬퍼가 folderUid 자동 주입 + 사후 검증까지 함. 직접 `POST /api/dashboards/db` 절대 금지.
+8. **마무리**: `python3 grafana-audit/grafana_save.py verify` 실행 — 모든 CBR 대시보드가 팀 폴더에 있는지 최종 확인. 그 후 사용자에게 보고.
 
 **Segment breakdown을 추가했다면**: drill-down 대시보드에 함께 추가 (전사 CBR엔 너무 세밀)
 
@@ -559,7 +586,8 @@ ORDER BY cbr_cutoff_wrap.`time`
 ```
 
 - 결과 row: **정확히 6행** (직전 완성 6주, 이번 주 제외)
-- `cbr_cutoff_wrap` 마커는 idempotency 가드 — 일괄 점검 스크립트가 이미 wrap된 SQL 재변환 안 함
+- **연산자는 무조건 `<` (strictly less than). `<=`는 절대 금지** — 이번 주 월요일(진행중 주 시작일)이 포함되어 false drop 막대가 노출됨. 과거 사고: Panel 2 (헤이딜러 포함 세차 완료수)가 `<=`로 들어가 5/25 막대 노출 (2026-05-27 발견)
+- `cbr_cutoff_wrap` 마커는 idempotency 가드 — 일괄 점검 스크립트가 이미 wrap된 SQL 재변환 안 함. 그러나 이미 wrap된 SQL의 `<=` → `<` 수정은 idempotency 가드를 우회해야 하므로 수동 패치 필요
 - 신규 6w 패널 추가 후 또는 일괄 점검 시: `python3 grafana-audit/apply_cbr_cutoff.py apply` (idempotent)
 - time 컬럼 alias가 `time`이 아닌 경우 (`week_start_monday`, `bucket`, `wk` 등): 스크립트가 자동 검출. 새 alias 패턴은 `apply_cbr_cutoff.py`의 `TIME_COL_CANDIDATES`에 추가
 
@@ -600,5 +628,5 @@ ORDER BY cbr_cutoff_wrap.`time`
 | `grafana-audit/all_queries_v93.json` | 기존 CBR 패널 쿼리 전체 덤프 |
 | `grafana-audit/cbr-queries/` | 생성된 쿼리 저장소 |
 
-모든 경로는 프로젝트 루트 `/Users/trive/claude/` 기준.
-mysql-query.sh 경로: `/Users/trive/claude/mysql-query.sh`
+모든 경로는 작업 폴더(프로젝트 루트) 기준 상대경로.
+mysql-query.sh 경로: `./mysql-query.sh`
