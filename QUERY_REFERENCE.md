@@ -101,14 +101,18 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 
 수리 대시보드(`caramel_sales_admin`)의 정비 건. status: `NOT_STARTED / IN_PROGRESS / COMPLETED / PAID(정산완료) / CANCELLED`.
 
-### 정산 완료일 = activity log 기준 (★함정)
-- `crm_repair_order`에 **정산완료일 컬럼이 없다**. `modified_at`은 메모만 고쳐도 갱신되므로 정산일로 쓰면 안 됨 (이걸로 거르면 건수 누락).
-- 실제 정산 전환 시각 = `crm_activity_log` 에서 `activity_type='REPAIR_ORDER_STATUS_PAID'` 행의 `created_at`. `activity_record_id` = `crm_repair_order.id`.
-- 재-PAID 케이스 있음 → **최초 정산일은 `MIN(created_at)`** 사용.
+### 정산 완료일 = activity log 기준 + modified_at 폴백 (★함정)
+- `crm_repair_order`에 **정산완료일 컬럼이 없다**. `modified_at` 단독은 메모 수정에도 갱신돼 부정확.
+- 정본 = `crm_activity_log` 의 `activity_type='REPAIR_ORDER_STATUS_PAID'` 행 `created_at` (`activity_record_id`=`crm_repair_order.id`). 재-PAID 있으니 **`MIN(created_at)`**.
+- **그러나 로그 커버리지 ~99%**: 화면 플로우 안 거치고 직접 PAID 입력한 백엔트리(created=modified)는 로그가 없다. `JOIN`(inner)으로 짜면 이들이 통째로 누락된다 (실제로 1~4월 추출에서 2건 떨어진 사고 있었음).
+- → **`LEFT JOIN` 후 `COALESCE(MIN(log), modified_at)`** 로 폴백. 로그 있으면 로그, 없으면 modified_at.
 ```sql
-JOIN (SELECT activity_record_id, MIN(created_at) paid_at
-      FROM crm_activity_log WHERE activity_type='REPAIR_ORDER_STATUS_PAID'
-      GROUP BY activity_record_id) paid ON paid.activity_record_id = ro.id
+LEFT JOIN (SELECT activity_record_id, MIN(created_at) paid_at
+           FROM crm_activity_log WHERE activity_type='REPAIR_ORDER_STATUS_PAID'
+           GROUP BY activity_record_id) paid ON paid.activity_record_id = ro.id
+WHERE ro.status='PAID' AND ro.deleted_yn=0
+  AND COALESCE(paid.paid_at, ro.modified_at) >= :from
+  AND COALESCE(paid.paid_at, ro.modified_at) <  :to
 ```
 
 ### 금액 필드 매핑
