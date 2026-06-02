@@ -942,10 +942,40 @@ END AS sub_type
 | status | VarChar(128) | NO | - | 상태 (NOT_STARTED, IN_PROGRESS, COMPLETED, PAID, CANCELLED) |
 | address_id | Int | YES | - | FK → user_address |
 | pickup_datetime | DateTime | YES | - | 픽업 일시 |
-| suggested_price | Int | YES | - | 제안 가격 |
-| cost | Int | YES | - | 비용 |
+| suggested_price | Int | YES | - | **매출액** (고객 청구 = 안내가격) |
+| cost | Int | YES | - | **정산금액 = 원가** (수리업체 지급액) |
 | consultation_id | Int | NO | - | FK → crm_consultation |
 | delivery_fee | Int | YES | - | 탁송비 |
+
+> 정비마진 = `suggested_price - cost - delivery_fee` (마이너스 정상 존재).
+> **정산완료일 컬럼 없음** → `crm_activity_log`의 `REPAIR_ORDER_STATUS_PAID` 시각 사용 (아래 참조, `modified_at` 금지).
+> 디테일러 영업 건은 `crm_repair_order_issue` → `crm_issue.source_type='DETAILER'` → `source_record_id`=`detailer.id`. 자세한 쿼리: `QUERY_REFERENCE.md` 정비정산 섹션.
+
+---
+
+### crm_activity_log
+
+CRM(영업/정비) 객체의 생성·수정·상태전환 감사 로그. caramel_sales_admin 고객상세 화면의 **활동 피드**. 2025-02-13~. **상태 전환 시각의 정본** — 객체 테이블엔 전환일 컬럼이 없으므로 "언제 X 상태가 됐나"는 여기 `created_at`으로 답한다.
+
+| 컬럼 | 타입 | nullable | 기본값 | 설명 |
+|------|------|-----|--------|------|
+| id | Int | NO | autoincrement | PK |
+| created_at | DateTime | NO | now | **활동 발생 시각 = 상태 전환 시각** |
+| partner_id | Int | YES | - | 운영자(담당자). FK → partner. ※디테일러 아님 |
+| user_id | Int | NO | - | 고객. FK → user |
+| car_id | Int | YES | - | FK → car |
+| memo | Text | YES | - | 메모 |
+| activity_type | VarChar(100) | NO | - | 활동 종류 (아래) |
+| activity_record_id | Int | NO | - | 대상 레코드 PK (activity_type이 가리키는 테이블의 id) |
+| source_type | VarChar(100) | YES | - | 활동 출처 (예: 이슈가 DETAILER/CHECKUP/CUSTOMER_INQUIRY 등에서 발생) |
+| source_record_id | Int | YES | - | 출처 레코드 PK (source_type='DETAILER'이면 `detailer.id`) |
+
+`activity_type` 주요 값:
+- `{OBJECT}_CREATED / _UPDATED / _DELETED` — OBJECT ∈ ISSUE, CONSULTATION, NOTE, TODO, REPAIR_ORDER
+- 수리 상태전환: `REPAIR_ORDER_STATUS_{PAID|COMPLETED|IN_PROGRESS|CANCELLED|NOT_STARTED}`
+- 이슈 상태전환: `ISSUE_STATUS_{WON|LOST|DEFERRED|EXTERNALLY_RESOLVED|REPAIR_COMPLETED|...}`
+
+> **커버리지 ~99%**: 화면 플로우 안 거치고 직접 입력된 백엔트리는 로그가 없다 → 상태전환일 쿼리는 `LEFT JOIN` + `COALESCE(MIN(log.created_at), 객체.modified_at)` 폴백 권장. (`QUERY_REFERENCE.md` 정비정산 섹션 참조)
 
 ---
 
