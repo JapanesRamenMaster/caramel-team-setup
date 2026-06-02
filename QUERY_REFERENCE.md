@@ -97,6 +97,30 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 4. 포인트 차감: 비례 배분 (`item_price / total_price * point_amount`)
 5. 최종: `sale_price = base_price - point_alloc`
 
+## 정비(수리) 정산 — `crm_repair_order`
+
+수리 대시보드(`caramel_sales_admin`)의 정비 건. status: `NOT_STARTED / IN_PROGRESS / COMPLETED / PAID(정산완료) / CANCELLED`.
+
+### 정산 완료일 = activity log 기준 (★함정)
+- `crm_repair_order`에 **정산완료일 컬럼이 없다**. `modified_at`은 메모만 고쳐도 갱신되므로 정산일로 쓰면 안 됨 (이걸로 거르면 건수 누락).
+- 실제 정산 전환 시각 = `crm_activity_log` 에서 `activity_type='REPAIR_ORDER_STATUS_PAID'` 행의 `created_at`. `activity_record_id` = `crm_repair_order.id`.
+- 재-PAID 케이스 있음 → **최초 정산일은 `MIN(created_at)`** 사용.
+```sql
+JOIN (SELECT activity_record_id, MIN(created_at) paid_at
+      FROM crm_activity_log WHERE activity_type='REPAIR_ORDER_STATUS_PAID'
+      GROUP BY activity_record_id) paid ON paid.activity_record_id = ro.id
+```
+
+### 금액 필드 매핑
+- `suggested_price` = 매출액(고객 청구 = 안내가격), `cost` = 정산금액(수리업체 지급 = 원가), `delivery_fee` = 탁송비
+- 정비마진 = `suggested_price - cost - delivery_fee` (마이너스 정상적으로 존재)
+- `repair_shop_id`는 입력률 낮음(~1/3만) → 수리업체 NULL 다수
+
+### 디테일러 영업 건 (★함정)
+- `crm_repair_order` ↔ 디테일러 직접 FK 없음. `partner`는 디테일러가 아니라 **정비데스크 운영자**.
+- 영업 출처 = 이슈에 있음: `crm_repair_order_issue` → `crm_issue.source_type='DETAILER'` 이면 디테일러 영업 건.
+- 디테일러 이름 = `crm_issue.source_record_id` = `detailer.id` 조인. (source_type 값엔 `DETAILER`, `CUSTOMER_INQUIRY`, `REPAIR_RESERVATION`, `RESTORATION` 등 자유입력 혼재)
+
 ## Grafana 참조
 
 - 디테일러 가동률 대시보드: uid `fe6dr4x83wwlca`
