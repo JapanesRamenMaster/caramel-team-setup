@@ -32,6 +32,15 @@ case "$QUERY_UPPER" in
     SELECT*|SHOW*|DESCRIBE*|DESC\ *|EXPLAIN*)
         ALLOWED=true
         ;;
+    WITH*)
+        # CTE(WITH)는 읽기 전용일 때만 허용. WITH ... DELETE/UPDATE 등 쓰기 CTE(MySQL 8)는 차단.
+        # 단어경계(grep -w)로 'updated_at' 같은 컬럼명 오탐 방지.
+        if echo "$QUERY_UPPER" | grep -qiwE "(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|GRANT|REPLACE|MERGE|CREATE)"; then
+            ALLOWED=false
+        else
+            ALLOWED=true
+        fi
+        ;;
     UPDATE\ DETAILER_WORK_SCHEDULE_RULE\ SET\ DELETED_AT*|INSERT\ INTO\ DETAILER_WORK_SCHEDULE_RULE*)
         if [ "$ALLOW_ZONE_CHANGE" = true ]; then
             ALLOWED=true
