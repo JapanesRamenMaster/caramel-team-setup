@@ -23,6 +23,9 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 ### 시간 변환
 - DB는 UTC 저장 → `CONVERT_TZ(reservation_datetime, '+00:00', '+09:00')` 또는 `+ INTERVAL 9 HOUR`
 - GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용
+- **날짜를 결과로 내보낼 땐 `DATE()` 말고 `DATE_FORMAT(... , '%Y-%m-%d')`로 문자열 반환할 것** (★함정)
+  - `DATE(ts + INTERVAL 9 HOUR)`는 `DATE` 타입을 반환하는데, mysql2(node) 드라이버가 이를 **UTC 자정 ISO**로 직렬화 → KST 날짜가 화면상 **−9시간(전날 15:00Z)** 으로 밀려 보임. 일자별 집계가 +1일 어긋난 것처럼 오해하게 됨
+  - 예: `DATE_FORMAT(reservation_datetime + INTERVAL 9 HOUR, '%Y-%m-%d') AS kst_date` → `"2026-05-28"` 그대로
 
 ## 공급량 (슬롯 가용성) 산출
 
