@@ -149,7 +149,7 @@ curl -sL "$DEPLOY_KEYS_URL" -o "$DEPLOY_KEYS_TMP/keys.tar.gz" && \
     echo "WARNING: Deploy keys 다운로드 실패. 코드 레포 클론을 건너뜁니다."
 }
 
-REPOS="caramel-all caramel-api caramel-app caramel-detailer-app caramel-sales-admin careplus-web chart caramel-zero"
+REPOS="caramel-all caramel-api caramel-app caramel-detailer-app caramel-sales-admin careplus-web chart caramel-zero caramel-decks"
 for repo_name in $REPOS; do
     KEY_SRC="$DEPLOY_KEYS_TMP/$repo_name"
     KEY_DST="$SSH_DIR/caramel-deploy-${repo_name}"
@@ -221,6 +221,21 @@ if [ ! -d "$REPOS_DIR/caramel-zero/.git" ]; then
     else
         echo "WARNING: caramel-zero deploy key 미존재. 수동으로 한 번만 클론하세요:"
         echo "  cd $REPOS_DIR && git clone git@github.com:the-trive/caramel-zero.git"
+    fi
+fi
+
+# caramel-decks 클론 (슬라이드 brief 워크플로우 — 홈 직속, push 필요 → alias URL로 origin 설정)
+if [ ! -d "$HOME/caramel-decks/.git" ]; then
+    DECKS_KEY="$SSH_DIR/caramel-deploy-caramel-decks"
+    if [ -f "$DECKS_KEY" ]; then
+        echo "caramel-decks 레포를 클론합니다..."
+        git clone "git@caramel-deploy-caramel-decks:the-trive/caramel-decks.git" \
+            "$HOME/caramel-decks" 2>&1 || {
+            echo "WARNING: caramel-decks 클론 실패"
+        }
+    else
+        echo "WARNING: caramel-decks deploy key 미존재. 슬라이드 작업 시 수동 클론 필요:"
+        echo "  git clone git@github.com:the-trive/caramel-decks.git ~/caramel-decks"
     fi
 fi
 

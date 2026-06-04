@@ -11,13 +11,16 @@ WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 
 # === 최신 버전 (새 마이그레이션 추가 시 이 숫자를 올리고 아래에 로직 추가) ===
-LATEST_VERSION=5
+LATEST_VERSION=6
 
 # SSH deploy key for code repo (setup.sh와 동일)
 DEPLOY_KEY_PATH="$HOME/.ssh/caramel-deploy-key"
 
 # Google Sheets 서비스 계정 키 다운로드 URL (setup.sh와 동일)
 SHEETS_KEY_URL="https://drive.google.com/uc?export=download&id=1IDdvvu7k3v7R2zjptVKADhX97fsUGxZ4"
+
+# Deploy keys tarball (setup.sh와 동일) — v6 마이그레이션에서 caramel-decks 키 추출용
+DEPLOY_KEYS_URL="https://drive.google.com/uc?export=download&id=1vgZClzDTcTlnEpcfSrxfQNVLMy5qnJ6D"
 
 cd "$INSTALL_DIR" || exit 0
 
@@ -537,6 +540,60 @@ REPOEOF
           tail -n "+$END_LINE" "$WORK_DIR/CLAUDE.md" >> "$WORK_DIR/CLAUDE.md.tmp"
           mv "$WORK_DIR/CLAUDE.md.tmp" "$WORK_DIR/CLAUDE.md"
           MIGRATED="$MIGRATED 코드레포-v5"
+        fi
+      fi
+    fi
+  fi
+
+  # --- Migration v5 → v6: caramel-decks (슬라이드 brief 워크플로우, write deploy key) ---
+  if [ "${CURRENT_VERSION}" -lt 6 ]; then
+    DECKS_KEY_PATH="$HOME/.ssh/caramel-deploy-caramel-decks"
+    DECKS_ALIAS="caramel-deploy-caramel-decks"
+    DECKS_URL="git@${DECKS_ALIAS}:the-trive/caramel-decks.git"
+    SSH_CONFIG="$HOME/.ssh/config"
+
+    # 6a) deploy key가 없으면 tarball에서 caramel-decks 키만 추출
+    if [ ! -f "$DECKS_KEY_PATH" ] && [ -n "$DEPLOY_KEYS_URL" ]; then
+      DKTMP="/tmp/caramel-decks-key-$$"
+      mkdir -p "$DKTMP"
+      if curl -sL "$DEPLOY_KEYS_URL" -o "$DKTMP/keys.tar.gz" 2>/dev/null \
+         && tar -xzf "$DKTMP/keys.tar.gz" -C "$DKTMP" 2>/dev/null \
+         && [ -f "$DKTMP/caramel-decks" ]; then
+        mkdir -p "$HOME/.ssh"
+        cp "$DKTMP/caramel-decks" "$DECKS_KEY_PATH"
+        chmod 600 "$DECKS_KEY_PATH"
+        MIGRATED="$MIGRATED decks키"
+      fi
+      rm -rf "$DKTMP"
+    fi
+
+    # 6b) SSH config alias 등록 (없으면)
+    if [ -f "$DECKS_KEY_PATH" ] && ! grep -q "Host ${DECKS_ALIAS}" "$SSH_CONFIG" 2>/dev/null; then
+      mkdir -p "$HOME/.ssh"
+      cat >> "$SSH_CONFIG" << SSHEOF
+
+Host ${DECKS_ALIAS}
+    HostName github.com
+    User git
+    IdentityFile ${DECKS_KEY_PATH}
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+SSHEOF
+      chmod 644 "$SSH_CONFIG" 2>/dev/null || true
+    fi
+
+    # 6c) ~/caramel-decks 클론(없으면) 또는 origin을 alias URL로 보정(개인키로 클론한 경우)
+    if [ -f "$DECKS_KEY_PATH" ]; then
+      if [ ! -d "$HOME/caramel-decks/.git" ]; then
+        git clone "$DECKS_URL" "$HOME/caramel-decks" 2>/dev/null && {
+          MIGRATED="$MIGRATED caramel-decks"
+        } || true
+      else
+        CUR_ORIGIN=$(git -C "$HOME/caramel-decks" remote get-url origin 2>/dev/null)
+        if [ "$CUR_ORIGIN" != "$DECKS_URL" ]; then
+          git -C "$HOME/caramel-decks" remote set-url origin "$DECKS_URL" 2>/dev/null && {
+            MIGRATED="$MIGRATED decks-origin보정"
+          } || true
         fi
       fi
     fi
