@@ -20,6 +20,17 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - `CREATED`는 미확정 예약, `CANCELED`는 취소 — 둘 다 **제외**
 - `NOT IN ('CANCELED')` 사용 금지 — CREATED가 포함되어 데이터 왜곡됨
 
+### 세차 완료수: 직접 운영 vs 외부 운영(헤이딜러) — ★중요
+- **"헤이딜러"는 고객/사람이 아니라 외부 운영 건이다** (헤이딜러 매매 차량 상품화 계약). `reservation`/`app_user`에서 "헤이딜러 사람"을 찾으려 하지 말 것.
+- 세차 완료수는 두 갈래로 나뉜다:
+  - **직접 운영**: `reservation` 의 `status IN ('WASHED','REPORT_SENT')` (위 예약 상태 기준)
+  - **외부 운영(헤이딜러 등)**: `manual_wash_adjustment` 테이블의 `count` 합산 (reservation에 안 잡힘, 수기 보정)
+  - **전체 세차 완료** = 직접 + 외부(manual)
+- `manual_wash_adjustment` 컬럼: `wash_date`(DATE, 이미 KST 날짜), `count`(INT). 날짜는 추가 KST 변환 불필요.
+- 예: "헤이딜러 이번주 세차 완료수" →
+  `SELECT COALESCE(SUM(count),0) FROM manual_wash_adjustment WHERE wash_date >= <이번주 월요일(KST)> AND wash_date <= <오늘(KST)>`
+- 참고 쿼리: `tools/grafana-audit/cbr-queries/wash_completed_manual_*.sql`(헤이딜러), `wash_completed_direct_*.sql`(직접, 헤이딜러 제외)
+
 ### 시간 변환
 - DB는 UTC 저장 → `CONVERT_TZ(reservation_datetime, '+00:00', '+09:00')` 또는 `+ INTERVAL 9 HOUR`
 - GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용
