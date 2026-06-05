@@ -1,6 +1,6 @@
 ---
 name: slides
-version: 5.0.0
+version: 5.1.0
 description: |
   카라멜 슬라이드(Product Weekly · 타운홀 · 외부 미팅 · 일반 덱) 작업의 진입점.
   HTML canonical (`~/caramel-decks` repo). Claude Code(이 환경)에서 brief 작성 → **HTML 덱 직접 빌드** → 렌더 검증 → 보여주기까지 한 자리에서 끝낸다. (Claude.ai 핸드오프는 fallback)
@@ -98,7 +98,13 @@ allowed-tools:
 
 1. **시스템 읽기**: `caramel-decks/CLAUDE.md`(§10 전부) · `layouts.md` · `styles.css` · `slide-master/` 파일명 목록 · 기존 덱 하나(`*.html`)를 구조 레퍼런스로.
 2. **매핑 초안 → confirm**: brief의 슬라이드 흐름을 마스터 24종에 매핑한 표를 사용자에게 먼저 보여주고 확인받는다. (어디에도 안 맞고 자유변형이 필요하면 그때 명시 확인.)
-3. **빌드**: `~/caramel-decks`에서 fresh 작업(worktree 권장: `git worktree add ... origin/main`). `<덱 이름>.html` 생성.
+3. **빌드**: ⚠️ **반드시 `git fetch origin` 후 `origin/main`에서 작업한다.** 로컬 `~/caramel-decks` main은 stale일 수 있다(과거 lineage 갈림 → `slide-master/`·`layouts.md` 누락 사례 있음). **로컬 main에서 바로 빌드하지 말 것** — slide-master 없으면 마스터 복제가 불가해 죽도밥도 안 된다. fresh worktree로:
+   ```bash
+   git -C ~/caramel-decks fetch origin
+   git -C ~/caramel-decks worktree add /tmp/deck-wt origin/main
+   # /tmp/deck-wt 에 slide-master/ 25개 있는지 확인 후 여기서 빌드
+   ```
+   여기서 `<덱 이름>.html` 생성.
    - 각 슬라이드 = `<section data-screen-label="NN 라벨">`, `<deck-stage>` 안, 1920×1080.
    - **쓰는 마스터마다 그 PDF를 `pdftoppm -png -r 120 -singlefile "slide-master/<이름>.pdf" /tmp/m`로 렌더해 Read하고 여백·정렬·축·바·숫자 위치를 그대로 복제** (§10.3 원칙 16).
    - §10 전부 적용: 다크는 표지·인사+임팩트 1~2장만(18) · 뱃지/카드 단일스펙(19) · 라이트 수직그리드·hollow 금지(20) · 선언 액자금지+수치 정직성(21) · 24px floor · 한국어 word-break: keep-all.
@@ -149,6 +155,7 @@ allowed-tools:
 
 ## 새 덱 시작 체크리스트
 
+- [ ] **`git fetch origin` → `origin/main` worktree에서 작업** (로컬 main stale 주의, `slide-master/` 25개 존재 확인)
 - [ ] caramel-decks `CLAUDE.md` §10 전부 Read (특히 §10.3 마스터 충실·검증 게이트)
 - [ ] `layouts.md` · `styles.css` · `slide-master/` · `briefs/_template.md` Read
 - [ ] 인터뷰 6핵심 확보 + 자료 수집(첨부 직접 파싱, 예상치 "예상" 표기)
