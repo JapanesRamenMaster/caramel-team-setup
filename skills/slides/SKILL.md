@@ -1,10 +1,10 @@
 ---
 name: slides
-version: 4.0.0
+version: 5.0.0
 description: |
   카라멜 슬라이드(Product Weekly · 타운홀 · 외부 미팅 · 일반 덱) 작업의 진입점.
-  HTML canonical, brief.md 핸드오프 워크플로우(`~/caramel-decks` repo) 자동화.
-  사용자 요청에서 주제·청중·발표일·핵심 메시지 인터뷰 → 자료 수집 → brief.md 작성 → repo push → 핸드오프 메시지 출력.
+  HTML canonical (`~/caramel-decks` repo). Claude Code(이 환경)에서 brief 작성 → **HTML 덱 직접 빌드** → 렌더 검증 → 보여주기까지 한 자리에서 끝낸다. (Claude.ai 핸드오프는 fallback)
+  사용자 요청에서 주제·청중·발표일·핵심 메시지 인터뷰 → 자료 수집 → brief → 직접 빌드 → 겹침 검증 → 사용자 피드백 루프.
   Use when: "슬라이드", "장표", "발표 자료", "프레젠테이션", "pptx", "PPT", "피피티", "slides", "덱", "deck", "Product Weekly", "외부 미팅 슬라이드".
 allowed-tools:
   - Bash
@@ -24,11 +24,11 @@ allowed-tools:
   - mcp__google-sheets__get_sheet_data
 ---
 
-# /slides — 카라멜 덱 brief 자동화
+# /slides — 카라멜 덱 (brief → 직접 빌드 → 검증)
 
 **산출 형식은 항상 HTML canonical (caramel-decks repo).** PPTX는 만들지 않는다. 공유가 필요하면 HTML에서 export.
 
-이 스킬은 `~/caramel-decks` 워크플로우의 진입점 — Claude Code(이 환경)가 brief.md를 작성해 push하면, Claude(슬라이드 환경)이 GitHub에서 가져가 HTML로 빌드한다.
+**이 스킬은 brief만 쓰고 끝나지 않는다 — Claude Code(이 환경)에서 HTML 덱을 직접 빌드하고, headless chrome로 렌더해 검증하고, 사용자에게 보여주고 피드백으로 고치는 것까지 한 자리에서 한다.** caramel-decks의 디자인 시스템(`styles.css`)·레이아웃 마스터(`slide-master/` 24종)·누적 원칙(`CLAUDE.md §10`)이 다 갖춰져 있어 직접 빌드가 가능하다. Claude.ai 슬라이드 환경 핸드오프는 *fallback*(아래 Phase 6)일 뿐이다.
 
 한국어로 소통한다.
 
@@ -37,14 +37,15 @@ allowed-tools:
 ## 절대 규칙
 
 1. **HTML canonical 외 다른 형식 만들지 않는다.** PPTX/Keynote/Google Slides 다 거절. "PPT로 만들어줘"라고 와도 "산출은 HTML이고 공유 시 export"로 안내.
-2. **brief.md 푸시까지 = 이 스킬의 끝.** 슬라이드(.html) 자체는 다른 환경(Claude)에서 만든다. 이 스킬에서 .html을 만들려 하지 않는다.
-3. **`/townhall`은 Phase 1-4까지 자체 수집 → 이 스킬의 brief 작성 단계로 진입한다.** 타운홀이라고 별도 PPTX 만들지 않는다.
-4. **caramel-decks CLAUDE.md를 brief 작성 전 반드시 Read.** §10(라운드별 학습 원칙) 누적되는 곳 — 인용 / quote 슬라이드 / 24px floor 등 brief에 반영해야 할 가드레일이 거기 있다.
-5. **푸시는 `the-trive/caramel-decks` main에 직접.** 별도 브랜치 안 씀(brief 단계는 review-free).
+2. **이 스킬에서 .html을 직접 빌드한다.** (옛 버전은 brief까지가 끝이었으나 이제 직접 빌드가 기본.) brief는 콘텐츠 명세일 뿐, 산출은 완성된 .html이다.
+3. **마스터를 살벌히 따른다 (§10.3 원칙 16, 최우선).** 모든 슬라이드는 `slide-master/`의 레이아웃 중 하나에 매핑. 차트·타임라인·인덱스·KPI 등 그래픽도 **해당 마스터 PDF를 `pdftoppm`으로 렌더해서 직접 보고 1:1 복제**한다. 콘텐츠가 많으면 축약할지언정 레이아웃을 새로 발명하지 않는다. "볼드함"은 안 쓰던 마스터(차트·타임라인)를 꺼내 쓰는 데서 나온다 — 임의 디자인이 아니라.
+4. **caramel-decks `CLAUDE.md` §10 전부 + `layouts.md` + `styles.css`를 빌드 전 반드시 Read.** §10.1~10.3에 라운드별 학습 원칙(배경 규율·뱃지/카드 단일스펙·수직그리드·hollow 금지·선언 액자금지·수치 정직성 등)이 누적돼 있다. 전부 지킨다.
+5. **산출 직전 전 슬라이드 렌더 → 겹침/잘림 전수 점검은 필수 게이트 (§10.3 원칙 22).** 통과 못 하면 미완.
+6. **`/townhall`은 Phase 1-4까지 자체 수집 → 이 스킬의 brief·빌드 단계로 진입한다.**
 
 ---
 
-## 5단계 워크플로우
+## 6단계 워크플로우
 
 ### Phase 1 — 인터뷰 (`AskUserQuestion`)
 
@@ -71,114 +72,96 @@ allowed-tools:
 
 - **DB 수치**: `~/claude/mysql-query.sh "SQL"`. 첫 쿼리 전 `~/claude/QUERY_REFERENCE.md` Read 필수.
 - **Linear**: 이슈/프로젝트 (sub-issues 카운트, 라벨 분포 등)
-- **Slack**: 최근 컨텍스트 (캠페인 회고, 인시던트 등)
+- **Slack**: 최근 컨텍스트 (캠페인 회고, 인시던트 등). 승리는 `#승리` 채널 우선(townhall 규칙).
 - **Sheets**: 트라이브 프로젝션, KPI 시트
-- **첨부 PDF/이미지**: 내용 직접 파싱. brief 본문에 인용 끌어오기. (caramel-decks CLAUDE.md §10.1 원칙 1)
+- **첨부 PDF/이미지**: 내용 직접 파싱. brief 본문에 인용 끌어오기. (§10.1 원칙 1)
 
-자료가 많고 신뢰도 다양하면 **신뢰도 표시 필수**: 확정 / 가설 / 단일 데이터 / partial.
+자료가 많고 신뢰도 다양하면 **신뢰도 표시 필수**: 확정 / 가설 / 단일 데이터 / partial. 예상치는 "예상", 목표치는 "목표" 명시(§10.3 원칙 21).
 
 ---
 
 ### Phase 3 — brief.md 작성
 
 1. 템플릿 읽기: `~/caramel-decks/briefs/_template.md`
-2. 파일 경로: `~/caramel-decks/briefs/<덱-슬러그>.md`
-   - 슬러그: 한글 제목 그대로 OK. 공백 허용. 예: `product-weekly-260504.md`, `4월 타운홀.md`
-3. 채울 섹션:
-   - 메타 (6개 핵심)
-   - 오늘의 메시지 (one-liner)
-   - 핵심 발견 / 데이터 (각 발견마다 무엇/데이터/출처/신뢰도)
-   - 액션·우선순위 표 (P0/P1/P2)
-   - 제안 슬라이드 흐름 (`# / 내용 / 레이아웃 후보 / 메모`)
-   - 제외·주의 (가드레일)
-   - 첨부·링크
-   - 미해결 / TBD
+2. 파일 경로: `~/caramel-decks/briefs/<덱-슬러그>.md` (한글 제목 OK, 공백 허용)
+3. 채울 섹션: 메타(6핵심) · one-liner · 핵심 발견/데이터(무엇/데이터/출처/신뢰도) · 액션 표(P0/P1/P2) · 제안 슬라이드 흐름(`# / 내용 / 레이아웃 / 메모`) · 제외·주의 · 첨부·링크 · 미해결.
 
 #### 슬라이드 흐름 짤 때
-
-- **첫 장 = 표지, 끝 장 = 인사** (다크 배경 "감사합니다")
-- **1슬라이드 = 1메시지.** 우겨넣지 말 것
-- **레이아웃 후보** 모르면 비워둠 — Claude(슬라이드)가 매핑 초안 짜서 confirm 받음
-- **caramel-decks `layouts.md` 참조해 의도 기반으로 추천**: hero quote / 비교 2단 / KPI 3카드 / 표(recap) / 카드 4개 / 차트 강조 / 인덱스
-- 한국어 본문은 word-break: keep-all 전제 (caramel-decks CLAUDE.md §10.1 원칙 3, styles.css 적용 완료)
+- **첫 장 = 표지, 끝 장 = 인사** (다크 배경)
+- **1슬라이드 = 1메시지.** 우겨넣지 말 것.
+- **데이터는 시각화 후보를 명시** (§10.3 원칙 17): 추이→막대(9-x), before/after→세로막대 비교, 과정→타임라인(11-x), 비교→차트(8-x). 단 빌드는 마스터 차트 레이아웃을 충실히.
+- 레이아웃은 `slide-master/` 24종 중에서만 고른다. 텍스트 많은 특수 슬라이드만 사용자 명시 허용 시 `12. 자유 변형`.
 
 ---
 
-### Phase 4 — Push
+### Phase 4 — 직접 빌드 (이 환경에서 .html 생성)
 
-`~/caramel-decks` main에 직접:
-
-```bash
-cd ~/caramel-decks
-git status                       # working tree clean 확인
-git pull --ff-only
-# brief 파일 작성된 상태
-git add "briefs/<덱-슬러그>.md"
-git commit -m "brief: <덱 이름>"
-git push origin main
-```
-
-working tree dirty면 사용자에게 알리고 멈춤.
+1. **시스템 읽기**: `caramel-decks/CLAUDE.md`(§10 전부) · `layouts.md` · `styles.css` · `slide-master/` 파일명 목록 · 기존 덱 하나(`*.html`)를 구조 레퍼런스로.
+2. **매핑 초안 → confirm**: brief의 슬라이드 흐름을 마스터 24종에 매핑한 표를 사용자에게 먼저 보여주고 확인받는다. (어디에도 안 맞고 자유변형이 필요하면 그때 명시 확인.)
+3. **빌드**: `~/caramel-decks`에서 fresh 작업(worktree 권장: `git worktree add ... origin/main`). `<덱 이름>.html` 생성.
+   - 각 슬라이드 = `<section data-screen-label="NN 라벨">`, `<deck-stage>` 안, 1920×1080.
+   - **쓰는 마스터마다 그 PDF를 `pdftoppm -png -r 120 -singlefile "slide-master/<이름>.pdf" /tmp/m`로 렌더해 Read하고 여백·정렬·축·바·숫자 위치를 그대로 복제** (§10.3 원칙 16).
+   - §10 전부 적용: 다크는 표지·인사+임팩트 1~2장만(18) · 뱃지/카드 단일스펙(19) · 라이트 수직그리드·hollow 금지(20) · 선언 액자금지+수치 정직성(21) · 24px floor · 한국어 word-break: keep-all.
+   - 분량 많으면 Sonnet 서브에이전트(`Agent`, model sonnet)에 슬라이드별 명세를 주고 위임 가능. 결과는 이 스킬이 검증.
 
 ---
 
-### Phase 5 — 핸드오프 메시지 출력
+### Phase 5 — 렌더 검증 + 보여주기 (필수 게이트 + 피드백 루프)
 
-Claude(슬라이드 환경)에 그대로 붙여넣을 메시지를 출력:
+1. **렌더**: headless chrome로 전 슬라이드 PDF화 →
+   ```bash
+   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf=/tmp/deck.pdf "file://<HTML 절대경로>"
+   pdftoppm -png -r 90 /tmp/deck.pdf /tmp/d/s        # 슬라이드당 1장
+   ```
+2. **겹침/잘림 전수 점검 (게이트, §10.3 원칙 22)**: `/tmp/d/s-*.png`를 **전 슬라이드** 확인. 박스 겹침·텍스트 경계 침범·하단 잘림 0건이어야 통과. 발견 시 수정 후 재렌더.
+   - **이 환경에서 이미지를 직접 못 볼 때**(예: 한 세션 누적 이미지 한도) → **평가자 에이전트(`Agent`)에 전 슬라이드 렌더+검수를 위임**한다(별도 컨텍스트라 이미지 봄). 그래도 안 되면 Phase 6 fallback.
+3. **(품질 목표 높을 때) 평가→근본원인→재빌드 루프** (§ learned-principles R3 원칙 10): 평가자 에이전트로 점수+근본원인 받고, 개별 슬라이드가 아니라 *시스템 원인*(배경·뱃지·여백·마스터충실)을 고쳐 재빌드. 9점대까지 반복.
+4. **보여주기**: HTML+PDF를 `~/Downloads/<덱>-deck/`에 묶어(styles.css·deck-stage.js·assets 동봉) 사용자에게 전달. PDF는 Preview.app 마킹용.
+5. **피드백 루프**: 사용자 마킹/지적 → *시스템 원인*으로 변환해 §10 누적 후보로 삼고 재빌드.
 
-```
-새 덱 작업 시작.
+---
 
-Repo: the-trive/caramel-decks (main)
-Brief: briefs/<덱-슬러그>.md
+### Phase 6 — 커밋/공유 (+ Claude.ai 핸드오프 fallback)
 
-System 파일 (반드시 같이 가져올 것):
-- CLAUDE.md (작업 규칙, §10 라운드별 학습 원칙 전부 읽기)
-- layouts.md (레이아웃 카탈로그)
-- styles.css (v3.1 디자인 토큰)
-- deck-stage.js (수정 금지)
-
-`github_import_files`로 위 5개 파일 가져온 뒤:
-1. CLAUDE.md §0.2 사전 확인 절차대로 매핑 초안 표 먼저 보여주고 confirm 받기
-2. 파일명: <덱 이름>.html
-3. 24px floor / 한국어 word-break: keep-all 가드 지키기
-4. 끝나면 .html 다운로드 → /handoff 로 PR 올림
-```
-
-이후 사용자가 .html을 받아오면 `/handoff` 슬래시 커맨드(caramel-decks의 project 커맨드)로 PR 오픈.
+- 사용자가 OK하면 `.html`을 caramel-decks에 PR로 올린다(기존 deck 브랜치 패턴 `deck/<슬러그>` 또는 `/handoff` 커맨드).
+- **Fallback — Claude.ai 슬라이드 환경 핸드오프**: 이 환경에서 빌드/검증이 불가할 때(이미지도 못 보고 평가자도 막힘 등)만, brief를 push하고 아래 메시지 출력:
+  ```
+  Repo: the-trive/caramel-decks (main) · Brief: briefs/<슬러그>.md
+  CLAUDE.md(§10 전부)·layouts.md·styles.css·slide-master/·deck-stage.js 가져와서
+  마스터 살벌히 따라 <덱 이름>.html 빌드 → 매핑 초안 confirm 후 진행.
+  ```
 
 ---
 
 ## 가드레일
 
 ### 거절해야 하는 요청
-
-- "PPTX로 직접 만들어줘" → "산출은 HTML이고 공유 시 export. brief까지 만들고 다른 환경에서 HTML 빌드"로 안내
-- "지금 .html 직접 작성해줘" → 이 스킬은 brief 단계까지. .html은 분업된 다른 환경. 사용자가 굳이 원하면 별도 작업으로 분리
+- "PPTX로 직접 만들어줘" → "산출은 HTML이고 공유 시 export"로 안내.
+- (옛 규칙 "지금 .html 직접 작성 거절"은 **폐지**. 이제 직접 빌드가 기본이다.)
 
 ### caramel-decks 워크플로우 무시 케이스
-
-`~/caramel-decks` 외 디렉토리에서 일회성 슬라이드를 만들어 달라는 요청이 오면 (예: 학습용 1장 짜리, 비-카라멜 자료) brief 워크플로우는 과함. 이때만 사용자에게 "단순 1회용이면 그냥 마크다운/HTML 직접 만들까요?"로 분기.
+`~/caramel-decks` 외 일회성 슬라이드(학습용 1장, 비-카라멜)면 brief 워크플로우는 과함 → "단순 1회용이면 그냥 HTML 직접 만들까요?"로 분기(이때도 직접 빌드).
 
 ### 메시지가 너무 짧을 때
-
-"슬라이드 만들어줘"만 들어오면 Phase 1 인터뷰부터 진행. 추측 금지.
+"슬라이드 만들어줘"만 오면 Phase 1 인터뷰부터. 추측 금지.
 
 ---
 
 ## 새 덱 시작 체크리스트
 
-- [ ] caramel-decks `CLAUDE.md` Read (§10 누적 원칙 포함)
-- [ ] `briefs/_template.md` Read
-- [ ] 인터뷰 6개 핵심 확보
-- [ ] 자료 수집 (DB / Linear / Slack / 첨부 직접 파싱)
+- [ ] caramel-decks `CLAUDE.md` §10 전부 Read (특히 §10.3 마스터 충실·검증 게이트)
+- [ ] `layouts.md` · `styles.css` · `slide-master/` · `briefs/_template.md` Read
+- [ ] 인터뷰 6핵심 확보 + 자료 수집(첨부 직접 파싱, 예상치 "예상" 표기)
 - [ ] `briefs/<슬러그>.md` 작성
-- [ ] working tree clean 확인 → commit & push
-- [ ] 핸드오프 메시지 출력
-- [ ] 사용자가 .html 받아오면 `/handoff`로 PR 오픈
+- [ ] 슬라이드↔마스터 매핑 초안 confirm
+- [ ] 직접 빌드 (쓰는 마스터마다 PDF 렌더→복제, §10 전부 적용)
+- [ ] **렌더 → 전 슬라이드 겹침/잘림 전수 점검 게이트 통과** (못 보면 평가자 위임)
+- [ ] (선택) 평가→근본원인→재빌드 루프로 품질 상향
+- [ ] HTML+PDF Downloads에 묶어 보여주기 → 피드백 루프
+- [ ] OK 시 caramel-decks에 .html PR
 
 ---
 
 ## /townhall과의 관계
 
-`/townhall`은 격주 타운홀 전용 데이터 수집기. Phase 1-4(Slack/Obsidian/Linear/MySQL/GitHub 2주치 자동 수집·검증)까지 자체 진행 → 결과를 이 스킬의 Phase 3로 넘긴다. 즉 `/townhall`이 자료를 모은 뒤 brief 작성·push·핸드오프는 `/slides`와 동일.
+`/townhall`은 격주 타운홀 전용 데이터 수집기. Phase 1-4(Slack/Obsidian/Linear/MySQL/GitHub 2주치 자동 수집·검증)까지 자체 진행 → 이 스킬의 brief 작성·**직접 빌드·검증** 단계로 넘긴다. 빌드·검증 절차는 `/slides`를 단일 진실로 본다.
