@@ -130,7 +130,7 @@ allowed-tools:
 
 ### Phase 6 — 커밋/공유 (+ Claude.ai 핸드오프 fallback)
 
-- 사용자가 OK하면 `.html`을 caramel-decks에 PR로 올린다(기존 deck 브랜치 패턴 `deck/<슬러그>` 또는 `/handoff` 커맨드).
+- **산출물 = `~/Downloads/<덱>-deck/`의 HTML+PDF. 개별 덱은 기본적으로 caramel-decks에 커밋하지 않는다 (CLAUDE.md §10.4 원칙 24).** 레포는 디자인 시스템·누적 원칙·큐레이션된 레퍼런스 라이브러리용이지 덱 저장소가 아니다. 덱을 커밋하는 유일한 이유 = "다음 덱이 DOM을 복제할 레퍼런스 가치" → 타입별(타운홀·product weekly·외부미팅·텍스트/문화형) 베스트 1개씩만 큐레이션해 남기고, 일회성 덱은 안 올린다. 레퍼런스로 남길 가치가 보이면 **그때만** 명시적으로 브랜치+PR. (디자인 시스템·원칙 변경은 별개 — 항상 PR.)
 - **Fallback — Claude.ai 슬라이드 환경 핸드오프**: 이 환경에서 빌드/검증이 불가할 때(이미지도 못 보고 평가자도 막힘 등)만, brief를 push하고 아래 메시지 출력:
   ```
   Repo: the-trive/caramel-decks (main) · Brief: briefs/<슬러그>.md
