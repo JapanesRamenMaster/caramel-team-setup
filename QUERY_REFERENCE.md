@@ -20,23 +20,32 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - `CREATED`는 미확정 예약, `CANCELED`는 취소 — 둘 다 **제외**
 - `NOT IN ('CANCELED')` 사용 금지 — CREATED가 포함되어 데이터 왜곡됨
 
-### 세차 완료수: 직접 운영 vs 외부 운영(헤이딜러) — ★중요
-- **"헤이딜러"는 고객/사람이 아니라 외부 운영 건이다** (헤이딜러 매매 차량 상품화 계약). `reservation`/`app_user`에서 "헤이딜러 사람"을 찾으려 하지 말 것.
-- 세차 완료수는 두 갈래로 나뉜다:
-  - **직접 운영**: `reservation` 의 `status IN ('WASHED','REPORT_SENT')` (위 예약 상태 기준)
-  - **외부 운영(헤이딜러 등)**: `manual_wash_adjustment` 테이블의 `count` 합산 (reservation에 안 잡힘, 수기 보정)
-  - **전체 세차 완료** = 직접 + 외부(manual)
-- `manual_wash_adjustment` 컬럼: `wash_date`(DATE, 이미 KST 날짜), `count`(INT). 날짜는 추가 KST 변환 불필요.
-- 예: "헤이딜러 이번주 세차 완료수" →
-  `SELECT COALESCE(SUM(count),0) FROM manual_wash_adjustment WHERE wash_date >= <이번주 월요일(KST)> AND wash_date <= <오늘(KST)>`
-- 참고 쿼리: `tools/grafana-audit/cbr-queries/wash_completed_manual_*.sql`(헤이딜러), `wash_completed_direct_*.sql`(직접, 헤이딜러 제외)
+### 세차 완료 시각 컬럼 (★함정: reservation_datetime ≠ 완료 시각)
+- **`washed_at`**: 실제 세차 완료 처리 시각(UTC). 완료 건 날짜별 집계의 기준 컬럼.
+  `DATE(CONVERT_TZ(r.washed_at, '+00:00', '+09:00')) AS wash_date`
+- **`reservation_datetime`**: 고객이 예약한 시작 시각(UTC). 실제 완료 시각이 아님.
+- 세차 완료수를 날짜별로 집계할 때 `reservation_datetime` 기준으로 짜면 예약일 집계가 된다.
+  디테일러가 예약 시간 이후 완료 처리하면 `washed_at`이 다음날 0시 이후일 수도 있음.
+- `washed_at`은 status=`WASHED`/`REPORT_SENT`일 때만 NOT NULL 보장.
+
+### 구독 일시정지 상태 (★함정: status='ACTIVE'가 전부가 아님)
+- `status='ACTIVE' AND paused_at IS NOT NULL` = **일시정지 상태** (세차 불가, 구독료 정지)
+- `status='ACTIVE'` 단독 조건은 일시정지 포함 → "현재 세차 가능한 활성 구독자" 집계 시 왜곡
+- **실사용 구독자(일시정지 제외)**: `status='ACTIVE' AND paused_at IS NULL`
+- `paused_at`, `ended_at`은 코드에서 KST(`Asia/Seoul`)로 할당 → UTC +9H 변환 불필요
 
 ### 시간 변환
 - DB는 UTC 저장 → `CONVERT_TZ(reservation_datetime, '+00:00', '+09:00')` 또는 `+ INTERVAL 9 HOUR`
 - GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용
-- **날짜를 결과로 내보낼 땐 `DATE()` 말고 `DATE_FORMAT(... , '%Y-%m-%d')`로 문자열 반환할 것** (★함정)
-  - `DATE(ts + INTERVAL 9 HOUR)`는 `DATE` 타입을 반환하는데, mysql2(node) 드라이버가 이를 **UTC 자정 ISO**로 직렬화 → KST 날짜가 화면상 **−9시간(전날 15:00Z)** 으로 밀려 보임. 일자별 집계가 +1일 어긋난 것처럼 오해하게 됨
-  - 예: `DATE_FORMAT(reservation_datetime + INTERVAL 9 HOUR, '%Y-%m-%d') AS kst_date` → `"2026-05-28"` 그대로
+
+### 차량 브랜드 필터 (★함정: `car.brand`는 레거시 nullable)
+- `car.brand`는 레거시 VARCHAR 컬럼으로 **NULL인 차량이 존재**. `brand IN ('포르쉐','벤츠',...)` 단독으로 쓰면 brand_id만 세팅된 차량이 통째로 누락됨 (2026-06 실사례: 파나메라·S클라스가 조건 충족임에도 탈락).
+- **올바른 패턴**: `car_brand` 테이블 조인 사용
+  ```sql
+  JOIN car_brand cb ON cb.id = c.brand_id
+  WHERE cb.name IN ('포르쉐', '벤츠', 'BMW', ...)
+  ```
+- `car.brand` 직접 필터는 레거시 데이터(구형 등록 차량) 이외엔 신뢰 불가. 항상 `brand_id → car_brand.name` 경로 사용.
 
 ## 공급량 (슬롯 가용성) 산출
 
@@ -76,6 +85,43 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   - **부분 시간** (full-day 아님) → 겹치는 슬롯 수만큼 차감
 - **`v_detailer_holiday_daily` 뷰의 한계**: rule 있는 장기 파견자의 holiday를 못 잡는 케이스 존재. capacity 쿼리에서는 뷰 대신 `detailer_holiday` 직접 조회 권장
 - `from`/`to`는 UTC DateTime — **부분 시간 차단도 지원** (예: 08~10시 KST만 비활성화)
+
+## Zone (디테일러 배정 ↔ 예약 위치 매핑)
+
+### 디테일러 할당 zone 판정
+- 배정은 `detailer_work_schedule_rule.zone_id` 로 결정 (rule엔 day_of_week뿐 아니라 `zone_id`도 있음)
+- 조인: `detailer_work_schedule ws`(detailer_id) → `_rule r`(schedule_id, `deleted_at IS NULL`) → `zone z`(id = r.zone_id)
+- 현재 유효 배정만: `UTC_TIMESTAMP() BETWEEN ws.effective_from AND ws.effective_to`
+
+### 예약 → zone 매핑 (zone_id 컬럼 없음, polygon으로 판정)
+- `reservation`엔 zone_id 없음. `zone.area`는 polygon(SRID 0, 좌표순서 **(lng lat)**)
+- ⚠️ **`reservation.latitude/longitude`는 @deprecated** (Prisma 스키마 2026-04-28~). 신규 예약은 `user_address`에만 좌표가 있을 수 있음. Zone 매핑 쿼리는 반드시 COALESCE 패턴:
+  ```sql
+  JOIN user_address ua ON ua.id = r.address_id
+  LEFT JOIN zone z ON ST_Contains(z.area,
+    ST_GeomFromText(CONCAT('POINT(',
+      COALESCE(r.longitude, ua.longitude), ' ',
+      COALESCE(r.latitude, ua.latitude), ')'), 0))
+  ```
+- `r.latitude` 단독 사용 시 신규 예약이 NULL로 처리돼 zone 매핑에서 누락됨.
+- 어느 zone에도 안 들어가면 z가 NULL → 미커버/이탈 후보
+
+### ⚠️ reservation.location 함정
+- `reservation.location`은 geometry가 **아니라 text** 타입이고 인코딩이 깨져 있음
+  (`ST_AsText`/`ST_SRID` 시도 시 `Geometry byte string must be little endian` 오류)
+- 위치는 반드시 `latitude` / `longitude` (decimal(11,8)) 컬럼을 쓸 것
+
+### 예약 작업 주소 = reservation 스냅샷 (★함정: user_address 고치지 말 것)
+- 디테일러 앱/알림이 읽는 작업 주소는 **`reservation.location` + `detailed_location` 스냅샷**.
+  `address_id`(→`user_address`) join이 **아니다**.
+- 좌표도 `reservation.latitude/longitude` 우선, 둘 다 NULL일 때만 user_address fallback
+  (`COALESCE(r.latitude, ua.latitude)`). caramel-zero `apps/api` 기준.
+- **일회성 작업지 변경(이번 건만 다른 주소)은 `reservation`의
+  `location`/`detailed_location`/`latitude`/`longitude` 4필드만 UPDATE.**
+  `address_id`·`user_address`는 건드리지 말 것 — 고객 저장 주소(집)를 고치면 향후 예약까지 오염.
+- 새 좌표는 NAVER 지오코딩: `GET https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=<주소>`,
+  헤더 `x-ncp-apigw-api-key-id` / `x-ncp-apigw-api-key`
+  (키: caramel-zero `.env.dev`의 `NAVER_MAPS_GEOCODE_CLIENT_ID/SECRET`). 응답 `addresses[0].x`=lng, `.y`=lat.
 
 ## 마케팅 데이터 소스
 
@@ -158,6 +204,15 @@ WHERE ro.status='PAID' AND ro.deleted_yn=0
 
 - 주말 디테일러 2~3명 → 매진율/fill rate 스윙이 큼
 - 평일만 분석하거나, 8+ 디테일러 운영일 필터 적용 권장
+
+## 시계열 교란변수 — 외부만구독 런칭(2025-10-05)
+
+- **월2회·월4회 외부만 구독 상품 런칭: 2025-10-05**
+- 2025-10 전후를 단순 비교하면 아래 지표가 런칭 효과를 포함해 왜곡된다:
+  재방문율, 외부만 비중, 디테일러 생산성, 세차당 소요시간
+- YoY/MoM 비교 시 반드시 외부만구독 세그먼트를 분리해 분석할 것
+- **외부만구독 필터**: `service.wash_type = 'OUTSIDE'` AND `reservation.subscription_id IS NOT NULL`
+  (product_id 기준 목록은 별도 확인 필요 — DB에서 `SELECT id, name FROM product WHERE name LIKE '%외부%'`)
 
 ## Invariant (불변 조건)
 
