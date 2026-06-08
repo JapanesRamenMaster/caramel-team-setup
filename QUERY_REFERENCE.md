@@ -2,63 +2,6 @@
 
 caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE.md`와 함께 참조.
 
----
-
-## 이 문서 사용법
-
-**대상**: 차비스 봇이 caramel-prod DB 쿼리 작성 시 참조하는 규칙 문서.
-
-**사용 순서**:
-1. 질문 키워드로 아래 [라우팅 트리거]에서 참조할 섹션 확인
-2. 해당 섹션 읽고 쿼리 작성
-3. 제출 전 [HYGIENE 체크리스트] 통과 여부 확인
-
----
-
-## 라우팅 트리거
-
-질문에 아래 키워드가 포함되면 해당 섹션을 먼저 읽을 것.
-
-| 키워드 | 참조 섹션 |
-|---|---|
-| 구독자, 활성, 일시정지, paused | 구독 일시정지 상태 |
-| 세차완료, 완료건수, 완료수 | 예약 상태 + 세차 완료 시각 컬럼 |
-| 디테일러, 활성 디테일러, 근무자 | 디테일러 (필터 기준) |
-| 공급, 슬롯, 가용, capacity | 공급량 (슬롯 가용성) 산출 |
-| zone, 배정, 지역, 존 | Zone (디테일러 배정 ↔ 예약 위치 매핑) |
-| 매출, 결제, payment, 결제액 | 매출 계산 |
-| 광고비, CAC, 마케팅, airbridge, naver, meta | 마케팅 데이터 소스 |
-| 정비, 수리, repair, crm_repair | 정비(수리) 정산 — crm_repair_order |
-| 브랜드, 차종, 포르쉐, 벤츠, BMW | 차량 브랜드 필터 |
-| fill rate, 가동률, 매진율 | Grafana 참조 + Fill Rate 계산 |
-| CBR, 6w, 주간 패널 | CBR 6w 패널 cutoff 정책 |
-| YoY, MoM, 2025-10, 외부만 | 시계열 교란변수 — 외부만구독 런칭 |
-| holiday, 연차, 결근, off, 비활성 | detailer_holiday (off/비활성화) 처리 |
-| CREATED, 미확정, 취소, 예약 상태 | 예약 상태 |
-| washed_at, reservation_datetime | 세차 완료 시각 컬럼 |
-| Invariant, 검증, sanity check | Invariant (불변 조건) |
-
----
-
-## [HYGIENE] 쿼리 제출 전 필수 체크리스트
-
-쿼리를 내기 전 아래 항목을 순서대로 확인. 하나라도 걸리면 수정 후 제출.
-
-| # | 체크 항목 | NG 패턴 → 올바른 패턴 |
-|---|---|---|
-| 1 | **테스터 제외** | `deleted_yn=0` 단독 → `+ test_yn=0 AND temp_yn=0 AND phone NOT IN (화이트리스트)` |
-| 2 | **구독 실사용자** | `status='ACTIVE'` 단독 → `+ paused_at IS NULL` (일시정지 포함됨) |
-| 3 | **구독 집계** | `deleted_yn=0` 단독 → `status='ACTIVE'` 추가 (STOPPED/ENDED 제외) |
-| 4 | **세차완료 날짜** | `reservation_datetime` 기준 → `washed_at` 으로 교체 |
-| 5 | **예약 상태 필터** | `NOT IN ('CANCELED')` → `IN ('WASHED','REPORT_SENT')` 명시로 교체 |
-| 6 | **차량 브랜드** | `car.brand = 'xxx'` 직접 → `JOIN car_brand cb ON cb.id=c.brand_id WHERE cb.name` |
-| 7 | **CBR 6w cutoff** | 주간 패널인데 `cbr_cutoff_wrap` 없음 → outer wrap 추가. cutoff 연산자는 `<` (`<=` 금지) |
-| 8 | **정비 정산일** | `INNER JOIN crm_activity_log` → `LEFT JOIN + COALESCE(MIN(log), modified_at)` |
-| 9 | **예약 위치** | `r.latitude` 단독 → `COALESCE(r.latitude, ua.latitude)` + `user_address` JOIN |
-| 10 | **Invariant** | 결과 확인: 예약수≤공급수, Fill Rate 0~100%, CREATED 미포함 여부 |
-
----
-
 ## 필터 기준 (Grafana 대시보드와 일치)
 
 ### 디테일러
@@ -182,14 +125,27 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 
 ## 마케팅 데이터 소스
 
-광고비 + Attribution 데이터는 외부 소스(Meta, Naver, Airbridge)에서 동기화되어 별도 일별 집계 테이블에 적재됨. 분석 쿼리는 이 테이블들을 사용.
+광고비 + Attribution 데이터는 외부 소스(Meta, Naver, Google, Airbridge)에서 동기화되어 별도 일별 집계 테이블에 적재됨. 분석 쿼리는 이 테이블들을 사용.
 
 | 테이블 | 출처 | 주요 컬럼 | 적재 |
 |---|---|---|---|
-| `meta_daily_performance` | Meta Ads API | `date`, `total_spending`, impressions/clicks 등 | Apps Script (마케팅 대시보드) |
-| `naver_daily_performance` | Naver Search Ads API | `date`, `total_cost`, impressions/clicks/conversions | Apps Script `SyncNaverSpend.gs` |
+| `meta_daily_performance` | Meta Ads API | `date`, `total_spending`, `total_purchase_value`, `total_purchase`, `avg_cac` | Apps Script (마케팅 대시보드) |
+| `naver_daily_performance` | Naver Search Ads API | `date`, `total_cost`, `impressions`, `clicks`, `conversions` | Apps Script `SyncNaverSpend.gs` |
+| `google_daily_performance` | Google Ads API | `date`, `total_cost`, `impressions`, `clicks` | Apps Script `syncGoogleAdsSpendToDB` (매일 10:00 KST) |
 | `airbridge_daily_install` | Airbridge MMP | `event_date`, `install_users` | Apps Script `SyncAirbridgeInstall.gs` (매일 11:00 KST) |
 | `user_attribution` | App SDK (Airbridge attribution) | `user_id`, `source`, `channel`, `campaign` | NestJS app 직접 적재 (가입 시점) |
+
+### ★ 총 광고비 집계 (반드시 3개 채널 합산)
+```sql
+SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
+  SELECT date, total_spending AS cost FROM meta_daily_performance WHERE date BETWEEN :from AND :to
+  UNION ALL
+  SELECT date, total_cost AS cost FROM naver_daily_performance WHERE date BETWEEN :from AND :to
+  UNION ALL
+  SELECT date, total_cost AS cost FROM google_daily_performance WHERE date BETWEEN :from AND :to
+) sub GROUP BY dt ORDER BY dt
+```
+⚠️ **`meta + naver`만 합산하면 Google 누락으로 20~30% 과소 집계됨** (2026-06-08 실사례: 6/6일 Meta 19.3만 + Naver 7.7만 = 27만, 실제 47만. Google 20.7만 누락).
 
 ### Mixed CAC 분모 옵션
 
@@ -199,7 +155,15 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - **주소 등록**: `user_address.created_at` 첫 주소
 - **첫 결제**: `payment.paid_at` 첫 결제 (`status IN ('PAID','PARTIAL_CANCELED')`, `amount > 0`)
 
-각 funnel 단계별 CAC = (Meta + Naver 광고비 합산) / 해당 단계 unique user 수.
+각 funnel 단계별 CAC = **(Meta + Naver + Google 광고비 합산)** / 해당 단계 unique user 수.
+
+### 알라미 보고서 데이터 소스 (★ DB 직접 쿼리 아님)
+- 알라미 = 매일 10:10 KST 슬랙 발송되는 마케팅 성과 일일 리포트
+- **광고비 수치**: `데일리 캠페인 트래커` Google Sheets에서 읽음 (DB 직접 조회 아님)
+  - 오늘(Row 3): Meta + Naver + Google 합산 수식 (정상)
+  - 전일(Row 7): Meta + Naver + Google 포함 (2026-06-08 버그 수정 완료)
+- **광고비 적재 타이밍**: Meta/Naver는 09:00 KST 수집, Google은 10:00 KST 수집
+- 알라미 수치 이상 시: DB 3개 테이블 직접 조회로 크로스체크할 것
 
 ## 매출 계산
 
