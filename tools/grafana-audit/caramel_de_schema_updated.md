@@ -1755,6 +1755,55 @@ LEFT JOIN zone z ON ST_Contains(
 
 ---
 
+### forecast_log *(신규 - 2026-06)*
+
+> zone별 기상청(KMA) 예보를 누적 저장하는 테이블. 우천 정책(실외주차 예약 불가, 고객 알림톡) 판단에 사용.
+
+| 컬럼 | 타입 | nullable | 기본값 | 설명 |
+|------|------|-----|--------|------|
+| id | Int | NO | autoincrement | PK |
+| created_at | DateTime(0) | NO | - | |
+| modified_at | DateTime(0) | NO | - | |
+| zone_id | Int | NO | - | FK → `zone.id` |
+| forecast_date | Date | NO | - | 예보 대상 날짜 |
+| forecasted_at | DateTime(0) | NO | - | 예보 수집 시각 |
+| weather_condition | VarChar(50) | YES | NULL | `SUNNY` / `RAIN` / `SNOW` |
+| precipitation_probability | Int | YES | NULL | 강수 확률 0–100 |
+| precipitation_amount_mm | Decimal(8,2) | YES | NULL | 강수량 (mm) |
+| source | VarChar(50) | NO | - | 현재 `KMA_PUBLIC_API` |
+| raw_payload | JSON | YES | NULL | 원본 API 응답 |
+
+**인덱스:** `(zone_id, forecast_date, forecasted_at DESC)`, `(forecast_date)`, `(source)`
+
+**⚠️ 같은 zone+date에 row가 여러 개 쌓인다** (수집할 때마다 append). 분석 시 반드시 `forecasted_at DESC` 기준 최신 1건으로 dedup:
+
+```sql
+SELECT zone_id, forecast_date, weather_condition, precipitation_amount_mm
+FROM (
+    SELECT *,
+           ROW_NUMBER() OVER (PARTITION BY zone_id, forecast_date ORDER BY forecasted_at DESC) AS rn
+    FROM forecast_log
+    WHERE forecast_date BETWEEN '2026-06-01' AND '2026-06-30'
+) t
+WHERE rn = 1;
+```
+
+**⚠️ `weather_condition`은 `reservation`에 없다** — 예약과 날씨를 연결하려면 `reservation → zone (polygon join) → forecast_log` 경로 사용:
+
+```sql
+LEFT JOIN zone z ON ST_Contains(z.area, ST_GeomFromText(CONCAT('POINT(', r.longitude, ' ', r.latitude, ')')))
+LEFT JOIN (
+    SELECT zone_id, forecast_date, weather_condition
+    FROM forecast_log
+    WHERE ...
+    -- dedup: forecasted_at DESC ROW_NUMBER 위 패턴 사용
+) fl ON fl.zone_id = z.id AND fl.forecast_date = DATE(CONVERT_TZ(r.reservation_datetime, '+00:00', '+09:00'))
+```
+
+**⚠️ `zone_rain_log` 테이블은 존재하지 않는다** — 마이그레이션 `20260518124804`에서 생성 후 `20260519190000_reconcile`에서 드롭됨. `forecast_log`로 통합.
+
+---
+
 ### time_slot_request_log
 
 > 유저가 예약 가능 슬롯을 조회할 때 요청을 로깅하는 테이블.

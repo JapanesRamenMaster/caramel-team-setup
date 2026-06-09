@@ -111,6 +111,12 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   (`ST_AsText`/`ST_SRID` 시도 시 `Geometry byte string must be little endian` 오류)
 - 위치는 반드시 `latitude` / `longitude` (decimal(11,8)) 컬럼을 쓸 것
 
+### 예약 → 날씨 조인 (★함정: forecast_log dedup 필수)
+- 날씨 데이터는 `forecast_log` 테이블. `reservation`엔 `weather_condition` 컬럼 없음.
+- **같은 zone+date에 row가 여러 개** 쌓임 → `ROW_NUMBER() OVER (PARTITION BY zone_id, forecast_date ORDER BY forecasted_at DESC)` 로 dedup 필수. 없으면 예약당 날씨가 여러 건 붙어 중복 발생.
+- **`zone_rain_log` 테이블은 드롭됨** — 마이그레이션에서 보이더라도 사용 불가. `forecast_log`만 사용.
+- 예약→날씨 경로: `reservation` → `zone` (polygon join, COALESCE 패턴) → `forecast_log` (zone_id + forecast_date)
+
 ### 예약 작업 주소 = reservation 스냅샷 (★함정: user_address 고치지 말 것)
 - 디테일러 앱/알림이 읽는 작업 주소는 **`reservation.location` + `detailed_location` 스냅샷**.
   `address_id`(→`user_address`) join이 **아니다**.
