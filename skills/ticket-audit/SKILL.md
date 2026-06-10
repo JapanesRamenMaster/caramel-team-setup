@@ -10,6 +10,14 @@ allowed-tools:
   - Bash
   - Grep
   - AskUserQuestion
+scope: team
+owner: juseong
+side-effects:
+  - db-read
+tags:
+  - 구독
+  - 세차권
+  - 고객관리
 ---
 
 # /ticket-audit — 구독 세차권 이용내역 조회 및 소실 분석

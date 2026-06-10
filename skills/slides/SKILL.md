@@ -22,6 +22,13 @@ allowed-tools:
   - mcp__claude_ai_Slack__slack_search_public_and_private
   - mcp__claude_ai_Slack__slack_read_channel
   - mcp__google-sheets__get_sheet_data
+scope: team
+owner: juseong
+side-effects:
+  - file-write
+tags:
+  - 슬라이드
+  - 발표
 ---
 
 # /slides — 카라멜 덱 (brief → 직접 빌드 → 검증)

@@ -3,6 +3,15 @@ name: clean-multi-reservations
 description: |
   동일차량 다중예약 정리. 슬랙 알림 확인 → 취소 대상 분석 → 사용자 승인 후 취소 실행.
   Use when: "다중 예약 정리", "중복 예약 정리", "clean multi", "clean-multi-reservations", "예약 정리".
+scope: team
+owner: sungjiwon
+side-effects:
+  - db-write
+  - notification
+disable-model-invocation: true
+tags:
+  - 예약
+  - 고객관리
 allowed-tools:
   - Read
   - Bash

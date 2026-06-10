@@ -4,6 +4,13 @@ version: 1.0.0
 description: |
   앰플리튜드 퍼널/세그멘테이션 차트 생성. 실험 문서 또는 구두 설명 기반.
   Triggers: "앰플리튜드 차트", "amplitude chart", "차트 만들어", "퍼널 차트", "대시보드 차트".
+scope: team
+owner: juseong
+side-effects:
+  - api-call-write
+tags:
+  - 분석
+  - Amplitude
 allowed-tools:
   - Read
   - Glob
