@@ -1,0 +1,29 @@
+name: Skill Auto-Review
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'incoming/**'
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install anthropic python-frontmatter PyGithub
+      - id: files
+        run: |
+          FILES=$(git diff --name-only HEAD~1 HEAD -- 'incoming/*.md' | tr '\n' ' ')
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+      - if: steps.files.outputs.files != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for FILE in ${{ steps.files.outputs.files }}; do
+            [ -f "$FILE" ] && python tools/enrich_skill.py "$FILE" "github-action"
+          done
