@@ -106,6 +106,18 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - `r.latitude` 단독 사용 시 신규 예약이 NULL로 처리돼 zone 매핑에서 누락됨.
 - 어느 zone에도 안 들어가면 z가 NULL → 미커버/이탈 후보
 
+### reservation → car 조인 fallback (★함정: applicable_car_id NULL + subscription_id도 NULL)
+- `reservation.applicable_car_id`가 NULL인 케이스 실존 (2026-06-10 검증에서 4건 확인)
+- **흔한 실수**: `applicable_car_id IS NULL`일 때 `r.subscription_id = c.subscription_id` fallback 시도
+  → 해당 4건은 `reservation.subscription_id`도 NULL이라 이 fallback도 작동 안 함
+- **올바른 fallback**: `r.user_id = c.user_id`
+  (4건 모두 일치 확인. 단, 고객이 차량 여러 대인 경우 복수 row 발생 가능 → 추가 필터 필요)
+- 패턴 예시:
+  ```sql
+  LEFT JOIN car c ON c.id = r.applicable_car_id
+                  OR (r.applicable_car_id IS NULL AND c.user_id = r.user_id)
+  ```
+
 ### ⚠️ reservation.location 함정
 - `reservation.location`은 geometry가 **아니라 text** 타입이고 인코딩이 깨져 있음
   (`ST_AsText`/`ST_SRID` 시도 시 `Geometry byte string must be little endian` 오류)
@@ -120,6 +132,9 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 ### 예약 작업 주소 = reservation 스냅샷 (★함정: user_address 고치지 말 것)
 - 디테일러 앱/알림이 읽는 작업 주소는 **`reservation.location` + `detailed_location` 스냅샷**.
   `address_id`(→`user_address`) join이 **아니다**.
+- **분석 READ 쿼리에서도** `r.address_id → user_address JOIN`으로 주소 텍스트를 가져오면 안 됨.
+  고객이 나중에 주소를 변경하면 과거 예약 레코드의 작업 주소가 현재 주소로 오염됨.
+  (실사례: 2026-06-10 일일 검증에서 발견)
 - 좌표도 `reservation.latitude/longitude` 우선, 둘 다 NULL일 때만 user_address fallback
   (`COALESCE(r.latitude, ua.latitude)`). caramel-zero `apps/api` 기준.
 - **일회성 작업지 변경(이번 건만 다른 주소)은 `reservation`의
