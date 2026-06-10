@@ -1,0 +1,45 @@
+name: Skill Auto-Review
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'incoming/**'
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Python 셋업
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 의존성 설치
+        run: pip install anthropic python-frontmatter PyGithub
+
+      - name: 변경된 incoming/ 파일 찾기
+        id: files
+        run: |
+          FILES=$(git diff --name-only HEAD~1 HEAD -- 'incoming/*.md' | tr '\n' ' ')
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+          echo "찾은 파일: $FILES"
+
+      - name: 스킬 보강 + PR 생성
+        if: steps.files.outputs.files != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for FILE in ${{ steps.files.outputs.files }}; do
+            if [ -f "$FILE" ]; then
+              SKILL_NAME=$(basename "$FILE" .md)
+              echo "처리 중: $FILE → skills/$SKILL_NAME/SKILL.md"
+              python tools/enrich_skill.py "$FILE" "github-action"
+            fi
+          done
