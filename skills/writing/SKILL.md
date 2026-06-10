@@ -7,6 +7,12 @@ triggers:
   - 제안서 작성
   - 분석 문서 작성
   - 경영지원팀/팀원에게 전달할 문서
+scope: team
+owner: juseong
+side-effects: []
+tags:
+  - 문서
+  - 글쓰기
 ---
 
 # 글쓰기 원칙
