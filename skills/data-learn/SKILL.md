@@ -1,3 +1,17 @@
+---
+name: data-learn
+description: |
+  데이터 작업 완료 후 새로 알게 된 DB/쿼리 지식을 레퍼런스 문서에 반영.
+  Use when: "data-learn", 데이터 작업 마무리 후, 쿼리 작업 끝나고 문서 반영할 때.
+scope: team
+owner: juseong
+side-effects:
+  - file-write
+tags:
+  - 분석
+  - 문서화
+---
+
 # /data-learn
 
 데이터 작업 완료 후 새로 알게 된 DB/쿼리 지식을 레퍼런스 문서에 반영하는 스킬.
