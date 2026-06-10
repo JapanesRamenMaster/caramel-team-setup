@@ -1,6 +1,13 @@
 ---
 name: zone-assignment
 description: "디테일러를 어느 zone에 배정할지 결정하는 분석 스킬. Use when: 신입 디테일러 zone 배정, 임시 파견 배치, 디테일러 N명 어디 보낼지, 디테일러 zone 추천, 어떤 동네에 넣을까, '디테일러 배정', 'zone 배정', '존 배정'. zone-change(DB 실제 변경)와 다름 — 이건 결정 단계까지만."
+scope: team
+owner: juseong
+side-effects:
+  - db-read
+tags:
+  - 디테일러
+  - zone
 ---
 
 # /zone-assignment — 디테일러 zone 배정 결정
