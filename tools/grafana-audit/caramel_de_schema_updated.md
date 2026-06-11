@@ -505,7 +505,7 @@ END AS car_type
 | status | VarChar(25) | NO | CREATED | 상태 (실제 값: `CREATED`, `PAID`, `PARTIAL_CANCELED`, `CANCELED`. 매출 집계 대상: `PAID`, `PARTIAL_CANCELED`) |
 | cancelled_at | DateTime | YES | - | 취소일 |
 | cancel_reason | Text | YES | - | 취소 사유 |
-| type | VarChar(25) | YES | - | 결제 타입 |
+| type | VarChar(25) | YES | - | 결제 타입 (실제 값: `VOUCHER`=세차권 단건, `SUBSCRIPTION`=구독 신규/갱신, `OPTION`=옵션, `PACKAGE`=패키지, NULL=기타) |
 | portone_id | VarChar(25) | YES | - | 포트원 ID |
 | cart_id | Int | YES | - | FK → cart |
 | product_id | Int | YES | - | FK → product |
@@ -592,6 +592,13 @@ END AS car_type
 
 **알려진 product 조건 예시 (2026-03 확인):**
 - 1회권 외부+내부: `type = 'VOUCHER'`, `category = 'CAR_WASH'`, `name = '외부 + 내부'`
+
+**⚠️ payment.name 패턴 주의 (2026-06 확인):**
+- `payment.type = 'SUBSCRIPTION'`일 때 `payment.name`에는 실제 구독 플랜명이 들어옴 ("월 1회", "월 2회(외부만)", "월 4회(외부만)" 등). `product.name`과 동일.
+- 번들 결제(구독+옵션 동시) 시 `payment.name`에 **` 외 N개` suffix**가 붙음 (예: "월 1회 외부 + 내부 방문 세차 (내부 1회) 외 1개"). 구독 유형별 분류 시 `LIKE '월 1회%'`, `LIKE '월 2회(외부만)%'` 패턴으로 정규화 필요.
+
+**⚠️ subscription_type 테이블 함정:**
+- `subscription_type` 테이블은 **2행뿐** (id=1: "1달에 1번", id=2: "2달에 1번"). 구독 플랜 종류 분류에 쓸 수 없음. 플랜 분류는 `payment.name` 또는 `product.name`(product_id 목록 → 아래 구독 상품 분류 기준) 사용.
 
 ---
 

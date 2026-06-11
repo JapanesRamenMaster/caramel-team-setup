@@ -92,6 +92,7 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - 배정은 `detailer_work_schedule_rule.zone_id` 로 결정 (rule엔 day_of_week뿐 아니라 `zone_id`도 있음)
 - 조인: `detailer_work_schedule ws`(detailer_id) → `_rule r`(schedule_id, `deleted_at IS NULL`) → `zone z`(id = r.zone_id)
 - 현재 유효 배정만: `UTC_TIMESTAMP() BETWEEN ws.effective_from AND ws.effective_to`
+- ⚠️ **`detailer_region` 테이블 쓰지 말 것** — `service_region_id` 기반 구식 구조. zone 배정 판정엔 `detailer_work_schedule_rule.zone_id` 체인만 사용.
 
 ### 예약 → zone 매핑 (zone_id 컬럼 없음, polygon으로 판정)
 - `reservation`엔 zone_id 없음. `zone.area`는 polygon(SRID 0, 좌표순서 **(lng lat)**)
@@ -105,18 +106,6 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   ```
 - `r.latitude` 단독 사용 시 신규 예약이 NULL로 처리돼 zone 매핑에서 누락됨.
 - 어느 zone에도 안 들어가면 z가 NULL → 미커버/이탈 후보
-
-### reservation → car 조인 fallback (★함정: applicable_car_id NULL + subscription_id도 NULL)
-- `reservation.applicable_car_id`가 NULL인 케이스 실존 (2026-06-10 검증에서 4건 확인)
-- **흔한 실수**: `applicable_car_id IS NULL`일 때 `r.subscription_id = c.subscription_id` fallback 시도
-  → 해당 4건은 `reservation.subscription_id`도 NULL이라 이 fallback도 작동 안 함
-- **올바른 fallback**: `r.user_id = c.user_id`
-  (4건 모두 일치 확인. 단, 고객이 차량 여러 대인 경우 복수 row 발생 가능 → 추가 필터 필요)
-- 패턴 예시:
-  ```sql
-  LEFT JOIN car c ON c.id = r.applicable_car_id
-                  OR (r.applicable_car_id IS NULL AND c.user_id = r.user_id)
-  ```
 
 ### ⚠️ reservation.location 함정
 - `reservation.location`은 geometry가 **아니라 text** 타입이고 인코딩이 깨져 있음
@@ -132,9 +121,6 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 ### 예약 작업 주소 = reservation 스냅샷 (★함정: user_address 고치지 말 것)
 - 디테일러 앱/알림이 읽는 작업 주소는 **`reservation.location` + `detailed_location` 스냅샷**.
   `address_id`(→`user_address`) join이 **아니다**.
-- **분석 READ 쿼리에서도** `r.address_id → user_address JOIN`으로 주소 텍스트를 가져오면 안 됨.
-  고객이 나중에 주소를 변경하면 과거 예약 레코드의 작업 주소가 현재 주소로 오염됨.
-  (실사례: 2026-06-10 일일 검증에서 발견)
 - 좌표도 `reservation.latitude/longitude` 우선, 둘 다 NULL일 때만 user_address fallback
   (`COALESCE(r.latitude, ua.latitude)`). caramel-zero `apps/api` 기준.
 - **일회성 작업지 변경(이번 건만 다른 주소)은 `reservation`의
@@ -175,6 +161,7 @@ SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
 - **차량 등록**: `car.created_at` 첫 차 등록 시점
 - **주소 등록**: `user_address.created_at` 첫 주소
 - **첫 결제**: `payment.paid_at` 첫 결제 (`status IN ('PAID','PARTIAL_CANCELED')`, `amount > 0`)
+  - 세차 서비스 신규 고객 기준이면 `type IN ('VOUCHER','SUBSCRIPTION')`도 추가할 것. OPTION/PACKAGE가 먼저 들어올 수 있어 단순 MIN(paid_at)이 틀린 결과를 낸다.
 
 각 funnel 단계별 CAC = **(Meta + Naver + Google 광고비 합산)** / 해당 단계 unique user 수.
 
@@ -255,6 +242,45 @@ WHERE ro.status='PAID' AND ro.deleted_yn=0
 - YoY/MoM 비교 시 반드시 외부만구독 세그먼트를 분리해 분석할 것
 - **외부만구독 필터**: `service.wash_type = 'OUTSIDE'` AND `reservation.subscription_id IS NOT NULL`
   (product_id 기준 목록은 별도 확인 필요 — DB에서 `SELECT id, name FROM product WHERE name LIKE '%외부%'`)
+
+## 사진 테이블 구조 (★함정: 두 테이블이 다른 컬럼명으로 전/후 구분)
+
+세차 전/후 사진은 **`wash_result_image`** 가 메인 테이블 (신규), `reservation_image`는 구버전.
+
+| 테이블 | 전/후 구분 컬럼 | 값 |
+|--------|--------------|------|
+| `wash_result_image` | `status` | `'BEFORE'` / `'AFTER'` |
+| `reservation_image` | `type` | `'BEFORE_WASH'` / `'AFTER_WASH'` |
+
+### wash_result_image JOIN 패턴
+```sql
+-- wash_result_image → reservation
+JOIN wash_result wr ON wr.id = wri.wash_result_id AND wr.deleted_yn = 0
+JOIN reservation r ON r.id = wr.reservation_id
+WHERE wri.deleted_yn = 0
+```
+
+### 이미 있는 평가 컬럼 (현재 전량 PENDING — 미사용 상태)
+```sql
+evaluation_status  VARCHAR(50)  DEFAULT 'PENDING'
+evaluated_at       DATETIME
+evaluator          VARCHAR(50)
+```
+
+### BEFORE/AFTER 섹션 종류
+외부: `OUTSIDE_FRONT`, `OUTSIDE_DRIVER_SIDE`, `OUTSIDE_PASSENGER_SIDE`, `OUTSIDE_FRONT_GLASS`, `OUTSIDE_DRIVER_SIDE_WHEEL`
+내부: `INSIDE_DRIVER_SEAT`, `INSIDE_CENTER_FASCIA`
+
+### 전/후 쌍이 있는 예약 추출 (기준: 최근 1일)
+```sql
+SELECT wr.reservation_id
+FROM wash_result wr
+WHERE wr.deleted_yn = 0
+  AND wr.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+  AND EXISTS (SELECT 1 FROM wash_result_image WHERE wash_result_id = wr.id AND status = 'BEFORE' AND deleted_yn = 0)
+  AND EXISTS (SELECT 1 FROM wash_result_image WHERE wash_result_id = wr.id AND status = 'AFTER' AND deleted_yn = 0)
+```
+규모: 전/후 둘 다 있는 예약 **~139건/일** (2026-06-10 기준)
 
 ## Invariant (불변 조건)
 

@@ -4,15 +4,9 @@ version: 1.0.0
 description: |
   CBR(Caramel Business Review) Grafana 대시보드용 분석 쿼리 생성.
   세차당 매출, 세차 완료수, 디테일러 생산성, 옵션 추가율, 전환율 등.
-  Use when: "세차당 매출 쿼리", "CBR 쿼리 만들어줘", "Grafana 패널 추가".
-scope: team
-owner: juseong
-side-effects:
-  - db-read
-tags:
-  - 분석
-  - Grafana
-  - CBR
+  인터뷰 → 참조 → 생성 → 검증 → 학습의 5단계 워크플로우.
+  Use when: "세차당 매출 쿼리", "CBR 쿼리 만들어줘", "Grafana 패널 추가",
+  "Grafana 쿼리 만들어줘", "분석 쿼리 생성" 등.
 allowed-tools:
   - Bash
   - Read

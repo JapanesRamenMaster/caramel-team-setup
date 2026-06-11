@@ -1,14 +1,6 @@
 ---
 name: zone-change
 description: "디테일러 zone 변경 (예: Z1 → Z3). Use when: zone 변경, 배정 변경, 존 변경, 셀 변경, 디테일러 존 옮기기."
-scope: team
-owner: juseong
-side-effects:
-  - db-write
-disable-model-invocation: true
-tags:
-  - 디테일러
-  - zone
 ---
 
 # /zone-change — 디테일러 zone 변경

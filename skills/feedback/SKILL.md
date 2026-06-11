@@ -13,12 +13,6 @@ allowed-tools:
   - Bash
   - AskUserQuestion
   - WebFetch
-scope: team
-owner: juseong
-side-effects: []
-tags:
-  - 팀워크
-  - 문서
 ---
 
 # /feedback — 팀원 작업물 피드백
