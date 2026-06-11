@@ -47,6 +47,10 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   ```
 - `car.brand` 직접 필터는 레거시 데이터(구형 등록 차량) 이외엔 신뢰 불가. 항상 `brand_id → car_brand.name` 경로 사용.
 
+### 차량 모델 조인 (★함정: `car.car_model_id` 없음)
+- `car_model` 테이블 FK 컬럼명은 **`car.model_id`** — `car_model_id`는 존재하지 않아 "Unknown column" 오류 발생.
+- 올바른 조인: `LEFT JOIN car_model cm ON c.model_id = cm.id`
+
 ## 공급량 (슬롯 가용성) 산출
 
 ### 테이블 구조
@@ -117,6 +121,12 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - **같은 zone+date에 row가 여러 개** 쌓임 → `ROW_NUMBER() OVER (PARTITION BY zone_id, forecast_date ORDER BY forecasted_at DESC)` 로 dedup 필수. 없으면 예약당 날씨가 여러 건 붙어 중복 발생.
 - **`zone_rain_log` 테이블은 드롭됨** — 마이그레이션에서 보이더라도 사용 불가. `forecast_log`만 사용.
 - 예약→날씨 경로: `reservation` → `zone` (polygon join, COALESCE 패턴) → `forecast_log` (zone_id + forecast_date)
+
+### 야외/실내 주차장 필터 (★함정: reservation에 없음, user_address 조인 필수)
+- 주차장 유형은 `reservation`에 없고 `user_address.parking_lot_type`에 있음.
+- 값: `'OUTDOOR'`(야외), `'INDOOR'`(실내), **`NULL`(48k건, 미등록)**.
+- ⚠️ **NULL ≠ OUTDOOR** — NULL은 유형 미등록이므로 야외 필터 시 `= 'OUTDOOR'` 명시 필수. `!= 'INDOOR'`로 쓰면 미등록 주소가 모두 포함됨.
+- 패턴: `JOIN user_address ua ON r.address_id = ua.id WHERE ua.parking_lot_type = 'OUTDOOR'`
 
 ### 예약 작업 주소 = reservation 스냅샷 (★함정: user_address 고치지 말 것)
 - 디테일러 앱/알림이 읽는 작업 주소는 **`reservation.location` + `detailed_location` 스냅샷**.
