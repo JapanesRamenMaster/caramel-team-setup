@@ -140,6 +140,20 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   헤더 `x-ncp-apigw-api-key-id` / `x-ncp-apigw-api-key`
   (키: caramel-zero `.env.dev`의 `NAVER_MAPS_GEOCODE_CLIENT_ID/SECRET`). 응답 `addresses[0].x`=lng, `.y`=lat.
 
+### 서비스 가능 지역 조회 (service_region)
+- 컬럼: `sido`(시/도), `sigungu`(시/군/구), `dong`(동), `available_yn`(1=가능)
+  - ⚠️ `city`, `district`, `name` 컬럼 **없음** — 쿼리 작성 시 그 이름 사용 금지
+- ⚠️ **`sigungu` 통합값 함정**: `"화성시"` 단독 행 없음. 구 분리 시 `"화성시 동탄구"`, `"화성시 병점구"` 형태로 저장. `= '화성시'`로 쓰면 이 행들 누락 → **LIKE `'%화성%'`** 사용
+- 세차 가능 여부: `available_yn = 1`
+- 표준 조회 패턴:
+  ```sql
+  SELECT srg.name AS srg_name, sr.sido, sr.sigungu, sr.dong, sr.available_yn
+  FROM service_region sr
+  JOIN service_region_group srg ON srg.id = sr.service_region_group_id
+  WHERE sr.sigungu LIKE '%화성%'        -- 시 단위 필터는 LIKE 필수
+    AND sr.available_yn = 1;
+  ```
+
 ## 마케팅 데이터 소스
 
 광고비 + Attribution 데이터는 외부 소스(Meta, Naver, Google, Airbridge)에서 동기화되어 별도 일별 집계 테이블에 적재됨. 분석 쿼리는 이 테이블들을 사용.
