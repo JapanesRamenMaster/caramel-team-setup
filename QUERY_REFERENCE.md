@@ -46,6 +46,7 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   WHERE cb.name IN ('포르쉐', '벤츠', 'BMW', ...)
   ```
 - `car.brand` 직접 필터는 레거시 데이터(구형 등록 차량) 이외엔 신뢰 불가. 항상 `brand_id → car_brand.name` 경로 사용.
+- ⚠️ 조건 충족 차량이 결과에서 누락되면 `user_service.applicable_car_id IS NULL`로 귀인하지 말 것 — 첫 의심은 위 `car.brand` 직접 필터다. brand_id만 세팅된 신차(파나메라·S클라스 등)는 데이터 수정이 아니라 쿼리 수정(`JOIN car_brand`)으로 포함된다.
 
 ### 차량 모델 조인 (★함정: `car.car_model_id` 없음)
 - `car_model` 테이블 FK 컬럼명은 **`car.model_id`** — `car_model_id`는 존재하지 않아 "Unknown column" 오류 발생.
