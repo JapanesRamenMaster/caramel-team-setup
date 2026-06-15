@@ -20,6 +20,10 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - `CREATED`는 미확정 예약, `CANCELED`는 취소 — 둘 다 **제외**
 - `NOT IN ('CANCELED')` 사용 금지 — CREATED가 포함되어 데이터 왜곡됨
 
+### 유료 예약 정의 + 취소율 측정 (★함정: user_service 취소는 soft-delete, DS-1055)
+- **유료 예약**(프로모션 무료 제외): `user_service.paid_yn=1` + **0원 VOUCHER 프로모션 제외**(`payment WHERE type='VOUCHER' AND amount=0 AND status='PAID'`인 `reservation_id` 제외). 프로모션 0원 유입이 전환율을 부풀림(단 5/22~6/1 코호트선 1~2%로 작았음 — 채널 뚫리면 커짐).
+- **취소율 측정 함정**: `user_service`는 예약 취소 시 `deleted_yn=1`로 **soft-delete**된다. 취소 건을 분모에 넣으려면 **`deleted_yn` 필터를 빼야** 한다 — 안 그러면 취소가 통째로 빠져 취소율이 0%로 왜곡.
+
 ### 세차 완료 시각 컬럼 (★함정: reservation_datetime ≠ 완료 시각)
 - **`washed_at`**: 실제 세차 완료 처리 시각(UTC). 완료 건 날짜별 집계의 기준 컬럼.
   `DATE(CONVERT_TZ(r.washed_at, '+00:00', '+09:00')) AS wash_date`
@@ -27,6 +31,7 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - 세차 완료수를 날짜별로 집계할 때 `reservation_datetime` 기준으로 짜면 예약일 집계가 된다.
   디테일러가 예약 시간 이후 완료 처리하면 `washed_at`이 다음날 0시 이후일 수도 있음.
 - `washed_at`은 status=`WASHED`/`REPORT_SENT`일 때만 NOT NULL 보장.
+- **"예약 시점" 일수 측정(가입→예약 며칠, 당일 예약 비중 등)은 `created_at`(예약을 *잡은* 시각) 기준.** `reservation_datetime`(세차 *예정일*)로 재면 왜곡 — "가입 당일 예약" 71%가 14%로 추락한다(세차는 보통 며칠 뒤라). DS-1055.
 
 ### 구독 일시정지 상태 (★함정: status='ACTIVE'가 전부가 아님)
 - `status='ACTIVE' AND paused_at IS NOT NULL` = **일시정지 상태** (세차 불가, 구독료 정지)
@@ -51,6 +56,24 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 ### 차량 모델 조인 (★함정: `car.car_model_id` 없음)
 - `car_model` 테이블 FK 컬럼명은 **`car.model_id`** — `car_model_id`는 존재하지 않아 "Unknown column" 오류 발생.
 - 올바른 조인: `LEFT JOIN car_model cm ON c.model_id = cm.id`
+
+### S·A 타겟(신차 출고가 6,500만↑) 판별 — `car_model_target` 뷰 (★함정: car_brand.target_yn 부정확)
+- **타겟 = `car_model_target` 뷰** (`launch_price>=6500 → is_target`). `JOIN car_model_target cmt ON cmt.id = c.model_id WHERE cmt.is_target=1`. 출고가 원본은 `car_price`(model_id·launch_price 만원). 고객이 차 여러 대면 `MAX(cmt.is_target)`.
+- ❌ **`car_brand.target_yn`(수입차 브랜드 21개 단위)은 부정확** — 제네시스 G90·GV80(국산 6500↑) 통째 누락 + BMW 1시리즈·벤츠 A클래스(타겟 브랜드 저가) 오포함. `car_tier`(T1~T7)도 차 크기 기준이라 출고가 대리변수로 못 씀.
+- 뷰 is_target=1 = 220개 모델(2026-06 기준). DS-1055.
+
+### 예약 → 차량 조인 (★함정: `reservation`에 `car_id` 없음)
+- `reservation` 테이블엔 차량 FK가 없다. **가장 깔끔한 경로 = `reservation_car`** (reservation_id↔car_id, 거의 1:1).
+  ```sql
+  JOIN (SELECT reservation_id, MAX(car_id) car_id FROM reservation_car GROUP BY reservation_id) rc
+    ON rc.reservation_id = r.id
+  JOIN car c ON c.id = rc.car_id
+  ```
+- 대안: `checkup.car_id`(washed만), `subscription.represent_car_id`. `user_service.applicable_car_id`는 15%만 채워져 부적합.
+
+### `reservation.key_direct_handover_yn` — "다른 사람이 키 전달" 체크박스
+- 온보딩/예약 플로우의 "세차 당일 다른 사람이 키를 전달할거예요" 체크박스 값. **TinyInt: 1=대리 전달, 0=본인 직접, null=미설정(구버전 예약, 집계 시 제외)**.
+- 프론트 필드명 `isKeyDirectHandover`. 대리인 연락처는 별도 컬럼 없음(예약 확정 시 `reservation.contact`에 덮어씀).
 
 ## 공급량 (슬롯 가용성) 산출
 
