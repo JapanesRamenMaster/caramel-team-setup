@@ -70,7 +70,7 @@
 - [Region & Scheduling: 지역/스케줄링](#region--scheduling-지역스케줄링)
 - [Ads & Analytics: 광고/분석](#ads--analytics-광고분석)
 - [Zone & Slot: 슬롯 수요 분석](#zone--slot-슬롯-수요-분석) *(신규 - 2026-03-11)*
-- [Views](#views) *(car_target, v_detailer_holiday_daily)*
+- [Views](#views) *(car_model_target, car_target, v_detailer_holiday_daily)*
 - [실험/코호트 분석 쿼리 패턴](#실험코호트-분석-쿼리-패턴) *(신규 - 2026-03, 업데이트 - 2026-03-13)*
 - [Zone 수요-공급 분석 쿼리 패턴](#zone-수요-공급-분석-쿼리-패턴) *(신규 - 2026-03-11)*
 - [테이블 관계 요약](#테이블-관계-요약)
@@ -179,7 +179,7 @@
 | deleted_yn | TinyInt | NO | 0 | 삭제 여부 |
 | display_order | Int | YES | - | 표시 순서 |
 | category | VarChar(100) | YES | - | 카테고리 |
-| target_yn | Boolean | YES | false | 타겟 브랜드 여부 |
+| target_yn | Boolean | YES | false | ⚠️ DEPRECATED — 쓰지 말 것. 브랜드 근사라 제네시스 등 누락. 고가차 타겟은 `car_price`(launch_price>=6500) 또는 `car_model_target.is_target` 사용 |
 | powertrain_warranty_months | Int | YES | - | 파워트레인 보증 (월) |
 | powertrain_warranty_km | Int | YES | - | 파워트레인 보증 (km) |
 | general_parts_warranty_months | Int | YES | - | 일반 부품 보증 (월) |
@@ -1820,9 +1820,21 @@ LEFT JOIN zone z ON ST_Contains(
 
 ## Views
 
+### car_model_target (View) — 고가차 타겟 (출고가 6500↑)
+
+> **고가차 타겟의 정본.** 데이터 정본은 `car_price` 테이블(model_id·launch_price), 이 뷰는 그 위에서 `is_target = (launch_price >= 6500)`로 계산. 현재 220개. 폐기된 `car_brand.target_yn` 대신 사용.
+> 쿼리: `SELECT * FROM car_model_target WHERE is_target=1` 또는 `SELECT * FROM car_price WHERE launch_price>=6500` (동일 결과).
+> ⚠️ 아래 `car_target`(고객 실차의 주행신호 타겟)과 **다른 개념** — "이 모델이 고가차냐"는 여기, "이 고객 차가 활성 타겟이냐"는 car_target.
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | Int | car_model.id |
+| name | VarChar | 모델명 |
+| is_target | Boolean | 출고가 6500만↑ 여부 (launch_price>=6500) |
+
 ### car_target (View)
 
-> 타겟 차량 계산 뷰 (연식 5년 미만 + 연평균 주행거리 10,000km 이하)
+> 고객 실차 타겟 계산 뷰 (연식 5년 미만 + 연평균 주행거리 10,000km 이하). ⚠️ 가격 기준 고가차가 아니라 **고객 차량의 활성/주행신호 타겟**. 가격 기준 고가차는 위 `car_model_target`.
 
 | 컬럼 | 타입 | 설명 |
 |------|------|------|
