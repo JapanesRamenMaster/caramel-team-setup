@@ -130,7 +130,7 @@ A단계 로컬 훅은 **작정하고 게이트+하트비트를 통째로 떼면*
 
 ## 오픈 이슈
 
-- 현황판 구현 위치 최종 결정(시트+슬랙 vs 카탈로그 사이트 탭).
+- ~~현황판 구현 위치 최종 결정~~ → **결정(2026-06-16): Google Sheet 한 장 + `현황판` 수식 탭.** 구현 플랜 `docs/superpowers/plans/2026-06-16-safe-action-compliance-visibility.md` (PR #32). 코드: `safe-action/`.
 - 위험 패턴 초기 목록 정의(prod write·DROP·대량삭제·외부발송 등에서 시작).
 - B단계 인증 현대화는 별도 선결 과제(secret1 폐기·호출자 식별). 본 설계는 A단계를 우선 구현 대상으로 한다.
 - 선결: team-setup 레포 `JapanesRamenMaster`(개인) → `the-trive` org 이관.
