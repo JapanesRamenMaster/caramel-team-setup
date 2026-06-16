@@ -10,7 +10,7 @@ WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 SKILLS_DIR="$HOME/.claude/skills"
-LATEST_VERSION=6   # update.sh의 LATEST_VERSION과 일치해야 함
+LATEST_VERSION=7   # update.sh의 LATEST_VERSION과 일치해야 함
 
 PASS="✅"; FAIL="❌"; WARN="⚠️ "
 problems=()
@@ -157,6 +157,27 @@ if [ -d "$INSTALL_DIR/skills" ]; then
   else
     echo "$PASS 모든 스킬 링크 정상"
   fi
+fi
+
+# ── 7) 안전 액션 레이어 ─────────────────────────────────────
+hdr "7. 안전 액션 레이어 (게이트/하트비트)"
+SA_STATE="$HOME/.claude/.safe-action-gate-state"
+if grep -q "safe-action/gate.sh" "$SETTINGS_FILE" 2>/dev/null; then
+  echo "$PASS SessionStart gate.sh 훅 등록됨"
+else
+  echo "$FAIL gate.sh 훅 미등록"; problems+=("안전 액션 gate.sh 훅 미등록")
+fi
+if grep -q "safe-action/enforce.py" "$SETTINGS_FILE" 2>/dev/null; then
+  echo "$PASS PreToolUse enforce.py 훅 등록됨"
+else
+  echo "$FAIL enforce.py 훅 미등록 → 차단 집행 안 됨"; problems+=("안전 액션 enforce.py 훅 미등록")
+fi
+if [ -f "$SA_STATE" ]; then
+  st=$(python3 -c "import json;print(json.load(open('$SA_STATE')).get('status',''))" 2>/dev/null)
+  echo "   게이트 마커: $st"
+  [ "$st" = "FAIL" ] && { echo "$WARN 게이트 FAIL 상태 → 도구 차단 중"; problems+=("게이트 마커 FAIL"); }
+else
+  echo "$WARN 게이트 마커 없음 (아직 한 번도 세션 안 열었거나 gate.sh 미실행)"
 fi
 
 # ── 진단 요약 ────────────────────────────────────────────────
