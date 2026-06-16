@@ -28,12 +28,14 @@ grep -q "safe-action/enforce.py"       "$SETTINGS_FILE" 2>/dev/null || add "enfo
 
 if [ -z "$reasons" ]; then status="PASS"; else status="FAIL"; fi
 
-# 마커 기록 (enforce.py가 읽음)
+# 마커 기록 (enforce.py가 읽음) — 값은 env로 넘겨 인젝션/따옴표 깨짐 방지
 mkdir -p "$(dirname "$STATE_FILE")"
+SA_STATUS="$status" SA_REASONS="$reasons" SA_VERSION="${cur_ver:-}" SA_STATE="$STATE_FILE" \
 python3 -c "
-import json,sys
-json.dump({'status':'$status','reasons':'''$reasons''','version':'${cur_ver:-}'},
-          open('$STATE_FILE','w'), ensure_ascii=False)
+import json, os
+json.dump({'status': os.environ['SA_STATUS'], 'reasons': os.environ['SA_REASONS'],
+           'version': os.environ['SA_VERSION']},
+          open(os.environ['SA_STATE'], 'w'), ensure_ascii=False)
 " 2>/dev/null
 
 # 하트비트 (best-effort; node 없으면 조용히 스킵)
@@ -47,7 +49,7 @@ fi
 
 # 요약 (additionalContext로 모델/사용자에 노출)
 if [ "$status" = "PASS" ]; then
-  echo "[안전세팅] 정상 — 가드 체인 OK, v${cur_ver}. 하트비트 기록됨."
+  echo "[안전세팅] 정상 — 가드 체인 OK, v${cur_ver}. 하트비트 전송."
 else
   echo "[안전세팅] ⚠️ 깨짐 → 도구 사용이 차단됩니다. 사유: $reasons"
   echo "  복구: 터미널에서  bash ~/.caramel-team-setup/update.sh  실행 후 새 세션."

@@ -43,6 +43,7 @@ def main():
         allow()
 
     # 마커 읽기
+    state = {}
     try:
         with open(STATE_FILE) as f:
             state = json.load(f)

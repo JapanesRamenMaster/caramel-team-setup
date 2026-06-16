@@ -143,7 +143,8 @@ ensure_safe_action_hooks() {
   command -v python3 >/dev/null 2>&1 || return 0
 
   local gate_cmd="$INSTALL_DIR/safe-action/gate.sh"
-  local enforce_cmd="/usr/bin/python3 $INSTALL_DIR/safe-action/enforce.py"
+  local py; py="$(command -v python3 || echo /usr/bin/python3)"
+  local enforce_cmd="$py $INSTALL_DIR/safe-action/enforce.py"
 
   GATE_CMD="$gate_cmd" ENFORCE_CMD="$enforce_cmd" TARGET="$target_file" python3 - <<'PYEOF'
 import json, os
