@@ -43,17 +43,19 @@ dash = [
      'COUNTIF(A3:A,"🟢")+COUNTIF(A3:A,"🔴"), "명 / 정상 ", '
      'COUNTIF(A3:A,"🟢"), " · 주의 ", COUNTIF(A3:A,"🔴"), "  (자동 갱신)")'],
     ['상태', '팀원', '최근 하트비트(KST)', '버전', '게이트', '사유'],
-    ['=BYROW(B3:B, LAMBDA(p, IF(p="","", LET(last, MAXIFS(heartbeat!A:A,heartbeat!C:C,p), '
-     'st, IFERROR(VLOOKUP(last, SORT(FILTER({heartbeat!A:A,heartbeat!F:F},heartbeat!C:C=p),1,FALSE),2,FALSE),""), '
+    # ⚠️ heartbeat 행 범위는 절대참조($C$2:...)로. 상대참조면 셀 위치 기준으로 행이 밀려
+    #    데이터를 못 읽고 #N/A가 난다(2026-06-17 수정). 전체열 참조도 $A:$A로 고정.
+    ['=BYROW(B3:B, LAMBDA(p, IF(p="","", LET(last, MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p), '
+     'st, IFERROR(VLOOKUP(last, SORT(FILTER({heartbeat!$A:$A,heartbeat!$F:$F},heartbeat!$C:$C=p),1,FALSE),2,FALSE),""), '
      'IF(INT(last)=TODAY(), IF(st="PASS","🟢","🔴"), "⚪")))))',
-     '=SORT(UNIQUE(FILTER(heartbeat!C2:C100000, heartbeat!C2:C100000<>"")))',
-     '=BYROW(B3:B, LAMBDA(p, IF(p="","", MAXIFS(heartbeat!A:A,heartbeat!C:C,p))))',
-     '=BYROW(B3:B, LAMBDA(p, IF(p="","", IFERROR(VLOOKUP(MAXIFS(heartbeat!A:A,heartbeat!C:C,p), '
-     'SORT(FILTER({heartbeat!A:A,heartbeat!E:E},heartbeat!C:C=p),1,FALSE),2,FALSE),""))))',
-     '=BYROW(B3:B, LAMBDA(p, IF(p="","", IFERROR(VLOOKUP(MAXIFS(heartbeat!A:A,heartbeat!C:C,p), '
-     'SORT(FILTER({heartbeat!A:A,heartbeat!F:F},heartbeat!C:C=p),1,FALSE),2,FALSE),""))))',
-     '=BYROW(B3:B, LAMBDA(p, IF(p="","", IFERROR(VLOOKUP(MAXIFS(heartbeat!A:A,heartbeat!C:C,p), '
-     'SORT(FILTER({heartbeat!A:A,heartbeat!G:G},heartbeat!C:C=p),1,FALSE),2,FALSE),""))))'],
+     '=SORT(UNIQUE(FILTER(heartbeat!$C$2:$C$100000, heartbeat!$C$2:$C$100000<>"")))',
+     '=BYROW(B3:B, LAMBDA(p, IF(p="","", TEXT(MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p),"yyyy-mm-dd hh:mm"))))',
+     '=BYROW(B3:B, LAMBDA(p, IF(p="","", IFERROR(VLOOKUP(MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p), '
+     'SORT(FILTER({heartbeat!$A:$A,heartbeat!$E:$E},heartbeat!$C:$C=p),1,FALSE),2,FALSE),""))))',
+     '=BYROW(B3:B, LAMBDA(p, IF(p="","", IFERROR(VLOOKUP(MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p), '
+     'SORT(FILTER({heartbeat!$A:$A,heartbeat!$F:$F},heartbeat!$C:$C=p),1,FALSE),2,FALSE),""))))',
+     '=BYROW(B3:B, LAMBDA(p, IF(p="","", IFERROR(VLOOKUP(MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p), '
+     'SORT(FILTER({heartbeat!$A:$A,heartbeat!$G:$G},heartbeat!$C:$C=p),1,FALSE),2,FALSE),""))))'],
 ]
 sheets.spreadsheets().values().update(
     spreadsheetId=sid, range="현황판!A1", valueInputOption='USER_ENTERED',
