@@ -11,7 +11,7 @@ WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 
 # === 최신 버전 (새 마이그레이션 추가 시 이 숫자를 올리고 아래에 로직 추가) ===
-LATEST_VERSION=6
+LATEST_VERSION=7
 
 # SSH deploy key for code repo (setup.sh와 동일)
 DEPLOY_KEY_PATH="$HOME/.ssh/caramel-deploy-key"
@@ -136,8 +136,61 @@ with open('$target_file', 'w') as f:
   echo "caramel-team-setup: SessionStart 훅 복구됨 ($(basename $(dirname "$target_file")))"
 }
 
+# 안전 액션 레이어 훅 보강: gate.sh(SessionStart) + enforce.py(PreToolUse)
+ensure_safe_action_hooks() {
+  local target_file="$1"
+  [ -f "$target_file" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  local gate_cmd="$INSTALL_DIR/safe-action/gate.sh"
+  local py; py="$(command -v python3 || echo /usr/bin/python3)"
+  local enforce_cmd="$py $INSTALL_DIR/safe-action/enforce.py"
+  local phase; phase="$(python3 -c "import json,os;print(json.load(open(os.path.join('$INSTALL_DIR','safe-action','config.json'))).get('SAFE_ACTION_PHASE',0))" 2>/dev/null)"
+  [ -z "$phase" ] && phase=0
+
+  GATE_CMD="$gate_cmd" ENFORCE_CMD="$enforce_cmd" PHASE="$phase" TARGET="$target_file" python3 - <<'PYEOF'
+import json, os
+target = os.environ["TARGET"]
+gate_cmd = os.environ["GATE_CMD"]
+enforce_cmd = os.environ["ENFORCE_CMD"]
+try:
+    with open(target) as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(0)
+hooks = data.setdefault("hooks", {})
+
+def has(cmd_substr, groups):
+    return any(cmd_substr in h.get("command", "")
+               for g in groups for h in g.get("hooks", []))
+
+ss = hooks.setdefault("SessionStart", [])
+if not has("safe-action/gate.sh", ss):
+    ss.append({"matcher": "", "hooks": [{"type": "command", "command": gate_cmd}]})
+
+phase = int(os.environ.get("PHASE", "0") or "0")
+pre = hooks.setdefault("PreToolUse", [])
+if phase >= 1:
+    # Phase 1+: 차단형 enforce 등록
+    if not has("safe-action/enforce.py", pre):
+        pre.append({"matcher": "", "hooks": [{"type": "command", "command": enforce_cmd, "timeout": 5}]})
+else:
+    # Phase 0: enforce 미등록 — 이미 있으면 제거(플래그를 끄기 스위치로)
+    new_pre = []
+    for g in pre:
+        g["hooks"] = [h for h in g.get("hooks", []) if "safe-action/enforce.py" not in h.get("command", "")]
+        if g.get("hooks"):
+            new_pre.append(g)
+    hooks["PreToolUse"] = new_pre
+
+with open(target, "w") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+PYEOF
+}
+
 # 글로벌 settings.json 검증
 ensure_hook "$SETTINGS_FILE"
+ensure_safe_action_hooks "$SETTINGS_FILE"
 
 # 프로젝트 레벨 settings.json 검증
 PROJECT_SETTINGS="$WORK_DIR/.claude/settings.json"
@@ -147,6 +200,7 @@ if [ -d "$WORK_DIR" ]; then
     echo '{}' > "$PROJECT_SETTINGS"
   fi
   ensure_hook "$PROJECT_SETTINGS"
+  ensure_safe_action_hooks "$PROJECT_SETTINGS"
 fi
 
 # ============================================================
@@ -597,6 +651,17 @@ SSHEOF
         fi
       fi
     fi
+  fi
+
+  # --- Migration v6 → v7: 안전 액션 레이어 준수 가시성 (게이트 훅은 ensure_safe_action_hooks가 매번 보강) ---
+  if [ "${CURRENT_VERSION}" -lt 7 ]; then
+    # 훅 등록은 위 ensure_safe_action_hooks가 이미 처리.
+    # 여기선 마커 디렉터리만 보장(첫 게이트 실행 전 enforce가 fail-closed로 막지 않게 PASS 시드).
+    mkdir -p "$HOME/.claude"
+    if [ ! -f "$HOME/.claude/.safe-action-gate-state" ]; then
+      echo '{"status":"PASS","reasons":"초기시드","version":"7"}' > "$HOME/.claude/.safe-action-gate-state"
+    fi
+    MIGRATED="$MIGRATED 안전액션게이트"
   fi
 
   # 버전 업데이트 — Google Sheets MCP가 설정 안 됐으면 버전을 올리지 않음 (다음 세션에 재시도)
