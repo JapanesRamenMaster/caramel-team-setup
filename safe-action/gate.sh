@@ -14,6 +14,7 @@ STATE_FILE=$(read_cfg GATE_STATE_FILE); STATE_FILE="${STATE_FILE/#\~/$HOME}"
 LATEST_VERSION=$(read_cfg LATEST_VERSION)
 [ -z "$STATE_FILE" ] && STATE_FILE="$HOME/.claude/.safe-action-gate-state"
 [ -z "$LATEST_VERSION" ] && LATEST_VERSION=7
+PHASE=$(read_cfg SAFE_ACTION_PHASE); [ -z "$PHASE" ] && PHASE=0
 
 reasons=""
 add() { reasons="${reasons:+$reasons; }$1"; }
@@ -38,21 +39,26 @@ json.dump({'status': os.environ['SA_STATUS'], 'reasons': os.environ['SA_REASONS'
           open(os.environ['SA_STATE'], 'w'), ensure_ascii=False)
 " 2>/dev/null
 
-# 하트비트 (best-effort; node 없으면 조용히 스킵)
+# 하트비트 (best-effort, 1일 1회 throttle; node 없으면 조용히 스킵)
 NAME=$(grep "^EMAIL=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
 [ -z "$NAME" ] && NAME=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
 [ -z "$NAME" ] && NAME="$USER"
-if command -v node >/dev/null 2>&1; then
+HEARTBEAT_STAMP="$HOME/.claude/.safe-action-heartbeat-date"
+TODAY_KST=$(TZ='Asia/Seoul' date +%Y-%m-%d 2>/dev/null)
+if [ "$(cat "$HEARTBEAT_STAMP" 2>/dev/null)" != "$TODAY_KST" ] && command -v node >/dev/null 2>&1; then
   node "$SA_DIR/heartbeat.js" "$NAME" "$(hostname)" "${cur_ver:-}" "$status" "$reasons" \
     "${CLAUDE_SESSION_ID:-$$}" 2>/dev/null &
+  echo "$TODAY_KST" > "$HEARTBEAT_STAMP"
 fi
 
 # 요약 (additionalContext로 모델/사용자에 노출)
 if [ "$status" = "PASS" ]; then
-  echo "[안전세팅] 정상 — 가드 체인 OK, v${cur_ver}. 하트비트 전송."
-else
+  echo "[안전세팅] 정상 — 가드 체인 OK, v${cur_ver}."
+elif [ "${PHASE:-0}" -ge 1 ] 2>/dev/null; then
   echo "[안전세팅] ⚠️ 깨짐 → 도구 사용이 차단됩니다. 사유: $reasons"
   echo "  복구: 터미널에서  bash ~/.caramel-team-setup/update.sh  실행 후 새 세션."
   echo "  그래도 안 되면  bash ~/.caramel-team-setup/team-diagnose.sh  결과를 맹주성님께."
+else
+  echo "[안전세팅] 점검: 일부 항목 미달(기록됨, 관찰 단계라 차단 안 함). 사유: $reasons"
 fi
 exit 0

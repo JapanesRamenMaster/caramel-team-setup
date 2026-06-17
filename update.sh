@@ -145,8 +145,10 @@ ensure_safe_action_hooks() {
   local gate_cmd="$INSTALL_DIR/safe-action/gate.sh"
   local py; py="$(command -v python3 || echo /usr/bin/python3)"
   local enforce_cmd="$py $INSTALL_DIR/safe-action/enforce.py"
+  local phase; phase="$(python3 -c "import json,os;print(json.load(open(os.path.join('$INSTALL_DIR','safe-action','config.json'))).get('SAFE_ACTION_PHASE',0))" 2>/dev/null)"
+  [ -z "$phase" ] && phase=0
 
-  GATE_CMD="$gate_cmd" ENFORCE_CMD="$enforce_cmd" TARGET="$target_file" python3 - <<'PYEOF'
+  GATE_CMD="$gate_cmd" ENFORCE_CMD="$enforce_cmd" PHASE="$phase" TARGET="$target_file" python3 - <<'PYEOF'
 import json, os
 target = os.environ["TARGET"]
 gate_cmd = os.environ["GATE_CMD"]
@@ -166,9 +168,20 @@ ss = hooks.setdefault("SessionStart", [])
 if not has("safe-action/gate.sh", ss):
     ss.append({"matcher": "", "hooks": [{"type": "command", "command": gate_cmd}]})
 
+phase = int(os.environ.get("PHASE", "0") or "0")
 pre = hooks.setdefault("PreToolUse", [])
-if not has("safe-action/enforce.py", pre):
-    pre.append({"matcher": "", "hooks": [{"type": "command", "command": enforce_cmd, "timeout": 5}]})
+if phase >= 1:
+    # Phase 1+: 차단형 enforce 등록
+    if not has("safe-action/enforce.py", pre):
+        pre.append({"matcher": "", "hooks": [{"type": "command", "command": enforce_cmd, "timeout": 5}]})
+else:
+    # Phase 0: enforce 미등록 — 이미 있으면 제거(플래그를 끄기 스위치로)
+    new_pre = []
+    for g in pre:
+        g["hooks"] = [h for h in g.get("hooks", []) if "safe-action/enforce.py" not in h.get("command", "")]
+        if g.get("hooks"):
+            new_pre.append(g)
+    hooks["PreToolUse"] = new_pre
 
 with open(target, "w") as f:
     json.dump(data, f, indent=2, ensure_ascii=False)

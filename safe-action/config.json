@@ -4,5 +4,6 @@
   "SA_KEY_PATH": "~/.claude/google-sheets-key.json",
   "GATE_STATE_FILE": "~/.claude/.safe-action-gate-state",
   "GATE_DISABLE_FILE": "~/.claude/.safe-action-gate-disable",
+  "SAFE_ACTION_PHASE": 0,
   "LATEST_VERSION": 7
 }
