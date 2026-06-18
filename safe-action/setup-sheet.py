@@ -48,7 +48,9 @@ dash = [
     ['=BYROW(B3:B, LAMBDA(p, IF(p="","", LET(last, MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p), '
      'st, IFERROR(VLOOKUP(last, SORT(FILTER({heartbeat!$A:$A,heartbeat!$F:$F},heartbeat!$C:$C=p),1,FALSE),2,FALSE),""), '
      'IF(INT(last)=TODAY(), IF(st="PASS","🟢","🔴"), "⚪")))))',
-     '=SORT(UNIQUE(FILTER(heartbeat!$C$2:$C$100000, heartbeat!$C$2:$C$100000<>"")))',
+     # 전체열 참조(행번호 X) — API 단일셀 쓰기가 행을 밀어 #N/A 내는 것 방지. 헤더 "name" 제외.
+     # IFERROR("") — 하트비트 0행일 때 FILTER #N/A가 전 칸에 번지는 것 방지(빈 상태=깔끔).
+     '=IFERROR(SORT(UNIQUE(FILTER(heartbeat!$C:$C, heartbeat!$C:$C<>"", heartbeat!$C:$C<>"name"))), "")',
      '=BYROW(B3:B, LAMBDA(p, IF(p="","", TEXT(MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p),"yyyy-mm-dd hh:mm"))))',
      '=BYROW(B3:B, LAMBDA(p, IF(p="","", IFERROR(VLOOKUP(MAXIFS(heartbeat!$A:$A,heartbeat!$C:$C,p), '
      'SORT(FILTER({heartbeat!$A:$A,heartbeat!$E:$E},heartbeat!$C:$C=p),1,FALSE),2,FALSE),""))))',
