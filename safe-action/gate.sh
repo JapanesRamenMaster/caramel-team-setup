@@ -8,6 +8,10 @@ WORK_DIR="$HOME/caramel-claude"
 CONFIG_FILE="$WORK_DIR/.setup-config"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
+# 팀원 셋업이 아닌 머신(.setup-config 없음 = 메인테이너 등)은 관찰 대상이 아니므로 조용히 종료.
+# (안 그러면 현황판에 버전 미상 FAIL로 노이즈가 낀다.)
+[ -f "$CONFIG_FILE" ] || exit 0
+
 # config.json에서 값 읽기 (python3로 안전 파싱)
 read_cfg() { python3 -c "import json;print(json.load(open('$SA_DIR/config.json')).get('$1',''))" 2>/dev/null; }
 STATE_FILE=$(read_cfg GATE_STATE_FILE); STATE_FILE="${STATE_FILE/#\~/$HOME}"
@@ -25,7 +29,10 @@ cur_ver=$(grep "^SETUP_VERSION=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2)
 # 2~4) 훅 등록
 grep -q "caramel-team-setup/update.sh" "$SETTINGS_FILE" 2>/dev/null || add "update.sh 훅 미등록"
 grep -q "safe-action/gate.sh"          "$SETTINGS_FILE" 2>/dev/null || add "gate.sh 훅 미등록"
-grep -q "safe-action/enforce.py"       "$SETTINGS_FILE" 2>/dev/null || add "enforce.py 훅 미등록"
+# enforce.py는 Phase 1+에서만 등록됨 → Phase 0에선 부재가 정상(실패로 치지 않음)
+if [ "${PHASE:-0}" -ge 1 ] 2>/dev/null; then
+  grep -q "safe-action/enforce.py"     "$SETTINGS_FILE" 2>/dev/null || add "enforce.py 훅 미등록"
+fi
 
 if [ -z "$reasons" ]; then status="PASS"; else status="FAIL"; fi
 
