@@ -52,6 +52,7 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   ```
 - `car.brand` 직접 필터는 레거시 데이터(구형 등록 차량) 이외엔 신뢰 불가. 항상 `brand_id → car_brand.name` 경로 사용.
 - ⚠️ 조건 충족 차량이 결과에서 누락되면 `user_service.applicable_car_id IS NULL`로 귀인하지 말 것 — 첫 의심은 위 `car.brand` 직접 필터다. brand_id만 세팅된 신차(파나메라·S클라스 등)는 데이터 수정이 아니라 쿼리 수정(`JOIN car_brand`)으로 포함된다.
+- **국산차 브랜드 목록** (car_brand.name 기준): `'현대', '기아', '제네시스', 'KGM', 'KGM(쌍용)', '르노', '쉐보레', '캠시스', 'GM', '르노삼성', '대우', '삼성'` — 쌍용은 `'KGM(쌍용)'`으로 저장됨 주의. 국산차 제외 시 `cb.name NOT IN (...)` 또는 `brand_id IS NULL` 차량을 별도 분류(등록 오류 가능성).
 
 ### 차량 모델 조인 (★함정: `car.car_model_id` 없음)
 - `car_model` 테이블 FK 컬럼명은 **`car.model_id`** — `car_model_id`는 존재하지 않아 "Unknown column" 오류 발생.
@@ -226,6 +227,15 @@ SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
 - 같은 이름 계열이라도 `description`이 다르다. 예: `올클린 케어 (29)`/`(39)`/`(49)`는 **"내·외부 방문세차 + 프리미엄 왁스코팅"**, `(55)`/`(35)`는 **"내·외부 방문세차"**(왁스코팅 없음), `(45)`는 **"(아파트 전단지)"**.
 - 상품을 비교·집계·설명할 때 `name`만 보고 "내용 동일"로 단정하지 말 것. 반드시 `description`(필요시 `wash_type`, 옵션)도 함께 조회·출력해 차이를 확인한다.
 
+## 쿠폰/프로모션 성과 분석 (★함정: `coupon` 테이블 없음, 발급≠사용)
+
+- 테이블: `coupon_code`(개별 코드 — `code`·`name`·`total_supply_count`), `coupon_campaign`(파트너 캠페인 — **`partner_name`** 필드), `coupon_code_reward`(보상 정의), `coupon_code_usage`(사용 이벤트 — `user_id`). **`coupon`/`discount` 테이블은 없다.**
+- ★코드명 LIKE 검색 오탐: `name`/`code LIKE '%KCC%'` 류는 **랜덤 발급코드**(예: "토스 유저 쿠폰"의 `YKCCHAZB`)가 대량 매칭된다. 파트너 프로모션은 보통 사람이 정한 값(예: `voucher_kcc`) — 정확 매칭으로 특정하고, 우연 매칭은 `name`으로 걸러낼 것.
+- 쿠폰 → 발급 세차권 조인: `coupon_code_reward.id` → **`user_service.coupon_code_reward_id`**. 한 쿠폰이 SERVICE+OPTION 등 reward 여러 행을 가지니 `IN (reward_ids)`로 묶는다. 보상 정체 = `coupon_code_reward.reward_id` → `service.id`/`options.id` (`reward_type`으로 구분).
+- ★전환 퍼널 = 발급≠사용: ① `coupon_code_usage`(쿠폰 사용=세차권 수령) → ② `user_service.reservation_id IS NOT NULL`(예약 생성) → ③ `reservation.status='WASHED'`(실제 완료). 무료 쿠폰은 ①→②에서 대량 이탈하므로(KCC: 194 발급 → 67 예약 → 64 완료) "사용 수"만 보면 전환을 과대평가.
+- ★리텐션/매출은 두 소스 교차검증: 코호트 추가 매출은 `user_service.paid_amount`(paid_yn=1, 무료 reward 제외) **와** `payment`(status='PAID', paid_at) 양쪽으로 확인. 무료세차 *당일* 결제는 현장 옵션 업셀이지 재방문이 아니다 — `payment.paid_at > 무료세차 washed_at`로 진짜 재방문만 분리.
+- ★발급수는 쉘 계정으로 부풀려진다(보이저 파밍): 무료 쿠폰 코호트엔 **`app_user.phone IS NULL` + 랜덤 7자 이름(`name REGEXP '^[A-Za-z0-9]{6,8}$'`) + 예약 0건**인 가짜 계정이 대량 섞인다(voucher_kcc: 194 중 127). 전화 없으면 예약 자체가 불가하므로 실사용자 모수는 **`phone IS NOT NULL`**로 거른다. 어뷰징 점검 시: ① `user_address.address`+`detail_address`로 세대 묶어 다중 무료세차 탐지, ② 같은 주소에 몰린 쉘 생성 버스트(`created_at` 시간대별 COUNT), ③ `app_user.dealer_id`/`created_by`로 딜러 경유 여부, ④ 코호트 `phone`을 `detailer.phone`(하이픈 제거 비교)과 대조해 디테일러 셀프-어뷰징 확인.
+
 ## 매출 계산
 
 ### 절대 하지 말 것
@@ -334,6 +344,17 @@ WHERE wr.deleted_yn = 0
   AND EXISTS (SELECT 1 FROM wash_result_image WHERE wash_result_id = wr.id AND status = 'AFTER' AND deleted_yn = 0)
 ```
 규모: 전/후 둘 다 있는 예약 **~139건/일** (2026-06-10 기준)
+
+## 타이어 마모도 조인 경로 (★함정: report_card에 reservation_id 없음)
+
+- `report_card`에는 `reservation_id` 컬럼 없음. 경로: `reservation → report (report.reservation_id) → report_card (rc.report_id = rp.id)`.
+- 타이어 마모도 타입: `rc.type IN ('TIRE_TREAD', 'TIRE_SUMMARY')`. 값은 JSON `data` 컬럼에 저장.
+- ⚠️ 세차 완료 전 예약(미래·CONFIRMED)은 `report` 자체가 없어 NULL — 반드시 `LEFT JOIN` 사용.
+```sql
+LEFT JOIN report rp ON rp.reservation_id = r.id AND rp.deleted_yn = 0
+LEFT JOIN report_card rc ON rc.report_id = rp.id AND rc.deleted_yn = 0
+  AND rc.type IN ('TIRE_TREAD', 'TIRE_SUMMARY')
+```
 
 ## Invariant (불변 조건)
 
