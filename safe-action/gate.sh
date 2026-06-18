@@ -46,16 +46,35 @@ json.dump({'status': os.environ['SA_STATUS'], 'reasons': os.environ['SA_REASONS'
           open(os.environ['SA_STATE'], 'w'), ensure_ascii=False)
 " 2>/dev/null
 
-# 하트비트 (best-effort, 1일 1회 throttle; node 없으면 조용히 스킵)
+# 하트비트 (best-effort, 1일 1회 throttle)
 NAME=$(grep "^EMAIL=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
 [ -z "$NAME" ] && NAME=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
 [ -z "$NAME" ] && NAME="$USER"
 HEARTBEAT_STAMP="$HOME/.claude/.safe-action-heartbeat-date"
 TODAY_KST=$(TZ='Asia/Seoul' date +%Y-%m-%d 2>/dev/null)
-if [ "$(cat "$HEARTBEAT_STAMP" 2>/dev/null)" != "$TODAY_KST" ] && command -v node >/dev/null 2>&1; then
-  node "$SA_DIR/heartbeat.js" "$NAME" "$(hostname)" "${cur_ver:-}" "$status" "$reasons" \
-    "${CLAUDE_SESSION_ID:-$$}" 2>/dev/null &
-  echo "$TODAY_KST" > "$HEARTBEAT_STAMP"
+
+# node를 PATH 밖(nvm/homebrew/volta/fnm 등)에서도 찾는다. SessionStart 훅 셸은 PATH가
+# 최소화돼 있어 `command -v node`만으론 못 찾는 경우가 많다(하트비트 침묵 미수집의 원인).
+find_node() {
+  local n
+  n="$(command -v node 2>/dev/null)" && { echo "$n"; return 0; }
+  for n in /opt/homebrew/bin/node /usr/local/bin/node \
+           "$HOME/.volta/bin/node" "$HOME/.asdf/shims/node" \
+           "$HOME"/.nvm/versions/node/*/bin/node \
+           "$HOME"/.fnm/node-versions/*/installation/bin/node; do
+    [ -x "$n" ] && { echo "$n"; return 0; }
+  done
+  return 1
+}
+
+# 스탬프는 heartbeat.js가 성공했을 때만 기록 → 전송 실패 시 다음 세션에 재시도(그날 묵살 방지)
+if [ "$(cat "$HEARTBEAT_STAMP" 2>/dev/null)" != "$TODAY_KST" ]; then
+  NODE_BIN="$(find_node)"
+  if [ -n "$NODE_BIN" ]; then
+    SAFE_ACTION_STAMP="$HEARTBEAT_STAMP" SAFE_ACTION_TODAY="$TODAY_KST" \
+    "$NODE_BIN" "$SA_DIR/heartbeat.js" "$NAME" "$(hostname)" "${cur_ver:-}" "$status" "$reasons" \
+      "${CLAUDE_SESSION_ID:-$$}" 2>/dev/null &
+  fi
 fi
 
 # 요약 (additionalContext로 모델/사용자에 노출)

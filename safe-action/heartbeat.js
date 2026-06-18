@@ -76,6 +76,13 @@ async function main() {
       'Content-Length': Buffer.byteLength(payload) },
     payload);
   if (ap.status >= 300) throw new Error('append failed: ' + ap.status + ' ' + ap.body);
+
+  // 성공했을 때만 1일1회 스탬프 기록 (실패하면 gate.sh가 다음 세션에 재시도)
+  const stamp = process.env.SAFE_ACTION_STAMP;
+  const today = process.env.SAFE_ACTION_TODAY;
+  if (stamp && today) {
+    try { fs.writeFileSync(stamp, today); } catch (e) { /* best-effort */ }
+  }
 }
 
 main().catch((e) => {
