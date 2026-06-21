@@ -72,6 +72,26 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
   ```
 - 대안: `checkup.car_id`(washed만), `subscription.represent_car_id`. `user_service.applicable_car_id`는 15%만 채워져 부적합.
 
+### 세차 내용(서비스명) 조회 — `reservation_care.name`은 항상 NULL (★함정)
+- `reservation_care.name` / `content` 컬럼은 **현재 전량 NULL**로 서비스명을 담지 않음. `care_item_id`도 대부분 미매핑.
+- **올바른 경로**: `user_service` → `service.name`
+  ```sql
+  SELECT s.name AS service_name
+  FROM user_service us
+  JOIN service s ON s.id = us.service_id
+  WHERE us.reservation_id = :rid AND us.deleted_yn = 0
+  LIMIT 1
+  ```
+- 값 예시: `'외부만'`, `'외부 + 내부'`, `'[리터치] 외부만'`, `'월 2회(외부만)'`
+- 세차 내용이 NULL로 나오면 `reservation_care` 대신 위 경로를 쓸 것.
+
+### 주행거리 — `car.mileage`(최신 스냅샷) vs `car_mileage`(이력 테이블)
+- `car.mileage` = 가장 최근 주행거리 단일 값 (앱에서 업데이트 시 갱신되는 스냅샷)
+- `car_mileage` 테이블 = 이력 레코드(`car_id`, `mileage`, `record_date`, `type`)
+- **현재 주행거리 단일 조회** → `car.mileage` 직접 사용
+- **시계열 추이·기간별 비교** → `car_mileage` 테이블 조회 (`record_date` 기준)
+- 세차 횟수는 `reservation.status='WASHED' AND deleted_yn=0` 조건으로 `user_id` 기준 COUNT.
+
 ### `reservation.key_direct_handover_yn` — "다른 사람이 키 전달" 체크박스
 - 온보딩/예약 플로우의 "세차 당일 다른 사람이 키를 전달할거예요" 체크박스 값. **TinyInt: 1=대리 전달, 0=본인 직접, null=미설정(구버전 예약, 집계 시 제외)**.
 - 프론트 필드명 `isKeyDirectHandover`. 대리인 연락처는 별도 컬럼 없음(예약 확정 시 `reservation.contact`에 덮어씀).
