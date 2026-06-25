@@ -58,8 +58,26 @@ if [ "$ALLOWED" = false ]; then
     exit 1
 fi
 
-# 쿼리 실행
-node -e "
+# 쿼리 실행 — Python 우선(빠름), 없으면 Node.js 폴백
+PYTHON_CANDIDATES=(
+    "/opt/caramel-analysis-bot/.venv/bin/python3"   # Droplet 봇 venv (가장 빠름)
+    "python3"                                         # 로컬/팀원 환경 시스템 Python
+)
+PYTHON_BIN=""
+for candidate in "${PYTHON_CANDIDATES[@]}"; do
+    if command -v "$candidate" &>/dev/null 2>&1 || [ -x "$candidate" ]; then
+        if "$candidate" -c "import mysql.connector" 2>/dev/null; then
+            PYTHON_BIN="$candidate"
+            break
+        fi
+    fi
+done
+
+if [ -n "$PYTHON_BIN" ]; then
+    "$PYTHON_BIN" "$SCRIPT_DIR/mysql-query.py" "$QUERY"
+else
+    # Node.js 폴백 (팀원 로컬 등 mysql.connector 미설치 환경)
+    node -e "
 const mysql = require('mysql2/promise');
 (async () => {
   const conn = await mysql.createConnection({
@@ -72,3 +90,4 @@ const mysql = require('mysql2/promise');
   await conn.end();
 })().catch(e => { console.error('DB 오류: ' + e.message); process.exit(1); });
 " "$QUERY"
+fi
