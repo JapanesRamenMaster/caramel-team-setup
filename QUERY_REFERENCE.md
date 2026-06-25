@@ -501,3 +501,165 @@ BEFORE/AFTER 섹션 종류:
   3. `cart_item` → `cart` → `payment` → `payment.metadata` JSON_TABLE로 실결제 항목 추출
   4. 포인트 차감: 비례 배분 (`item_price / total_price * point_amount`)
   5. 최종: `sale_price = base_price - point_alloc`
+
+---
+
+## 7. 주요 테이블 컬럼 치트시트
+
+> DESCRIBE 없이 바로 쿼리 작성하기 위한 핵심 컬럼 목록. 전체 스키마는 `DB_SCHEMA.md` 참조.
+
+### car
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int | PK |
+| plate_number | varchar(10) | 차량번호 |
+| model_year | int | 연식 (NULL 약 12%) |
+| brand | varchar(15) | 브랜드명 **레거시 — 99% NULL. `brand_id` 사용** |
+| brand_id | int | FK → car_brand.id (name 컬럼으로 JOIN) |
+| model | varchar(100) | 모델명 레거시. `model_id` 우선 |
+| model_id | int | FK → car_model.id (name 컬럼으로 JOIN) |
+| mileage | int | 최근 주행거리 스냅샷 |
+| user_id | int | FK → app_user.id |
+| deleted_yn | tinyint | 0=정상 |
+| temp_yn | tinyint | 1=임시 차량 (필터 제거 권장) |
+
+**국산차 브랜드 제외 패턴:**
+```sql
+JOIN car_brand cb ON cb.id = c.brand_id
+WHERE cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르노','쉐보레','캠시스','GM','르노삼성','대우','삼성')
+```
+
+---
+
+### reservation
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int | PK |
+| reservation_datetime | datetime | 예약 일시 **UTC 저장 → KST: CONVERT_TZ(...,'+00:00','+09:00')** |
+| washed_at | datetime | 세차 완료 시각 UTC |
+| status | varchar(25) | 완료: `WASHED` / `REPORT_SENT`. `COMPLETED` 미사용 |
+| user_id | int | FK → app_user.id |
+| detailer_id | int | FK → detailer.id |
+| address_id | int | FK → user_address.id |
+| subscription_id | int | **98% NULL — 구독 여부 판단에 사용 불가** |
+| location | text | 주소 문자열 |
+| detailed_location | text | 상세 주소 (동/호수) |
+| parking_info_content | text | 주차 안내 메모 |
+| deleted_yn | tinyint | 0=정상 |
+| allow_shuffle_yn | tinyint | 1=리배정 허용 |
+
+**차량 조인 (car_id 직접 없음 → reservation_car 경유):**
+```sql
+JOIN (SELECT reservation_id, MAX(car_id) car_id FROM reservation_car GROUP BY reservation_id) rc
+  ON rc.reservation_id = r.id
+JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
+```
+
+---
+
+### reservation_car
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| reservation_id | int | FK → reservation.id |
+| car_id | int | FK → car.id |
+| confirmed_yn | tinyint | **⚠️ 대부분 0 — 차량 조인 시 이 컬럼으로 필터 금지** |
+
+---
+
+### app_user
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int | PK |
+| name | varchar(50) | 이름 |
+| phone | varchar(15) | 전화번호 (하이픈 없음) |
+| uuid | varchar(50) | UUID (Amplitude userId) |
+| utm_source | text | 유입 채널 (`utm_medium`·`utm_campaign` 컬럼 없음) |
+| referrer | text | 유입 referrer |
+| test_yn | tinyint | 1=테스트 계정 |
+| temp_yn | tinyint | 1=임시 계정 |
+| deleted_yn | tinyint | 0=정상 |
+| deleted_at | datetime(3) | 삭제일 |
+| promotion_group_id | int | 프로모션 그룹 |
+
+**테스터 제외 패턴:** `u.deleted_yn = 0 AND u.test_yn = 0 AND u.temp_yn = 0`
+
+---
+
+### detailer
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int | PK |
+| name | varchar(100) | 디테일러 이름 |
+| user_id | int | FK → app_user.id |
+| deleted_yn | tinyint | 0=정상 |
+| retired_yn | tinyint | 1=퇴사 |
+| booking_yn | tinyint | 1=예약 가능 |
+| admin_yn | tinyint | 1=관리자 계정 |
+| tier | int | 티어 |
+| slack_member_id | varchar(100) | 슬랙 멤버 ID |
+
+**Active 디테일러 필터:** `d.deleted_yn=0 AND d.retired_yn=0 AND d.admin_yn=0`
+
+---
+
+### subscription
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int | PK |
+| user_id | int | FK → app_user.id |
+| status | varchar(25) | `ACTIVE` / `STOPPED` / `PAUSED` |
+| represent_car_id | int | FK → car.id (구독 대표 차량) |
+| product_id | int | FK → product.id |
+| started_at | datetime | 구독 시작일 |
+| ended_at | datetime | 구독 종료일 |
+| deleted_yn | tinyint | 0=정상 |
+| period | int | 주기 (숫자, period_unit과 조합) |
+| period_unit | varchar(15) | `'week'` / `'month'` |
+
+---
+
+### user_service (예약-서비스 연결)
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| reservation_id | int | FK → reservation.id |
+| user_id | int | FK → app_user.id |
+| service_id | int | FK → service.id |
+| deleted_yn | tinyint(1) | 0=정상 |
+| postpaid_yn | tinyint(1) | 0=선불, 1=후불 |
+| applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
+
+**세차 내용(서비스명) 조회:**
+```sql
+LEFT JOIN (
+  SELECT reservation_id, MIN(service_id) AS service_id
+  FROM user_service WHERE deleted_yn = 0 GROUP BY reservation_id
+) us ON us.reservation_id = r.id
+LEFT JOIN service s ON s.id = us.service_id
+-- s.name 예시: '외부만', '외부 + 내부', '[리터치] 외부만'
+```
+
+---
+
+### service
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int | PK |
+| name | varchar(25) | 서비스명 (`'외부만'`, `'외부 + 내부'` 등) |
+| deleted_yn | tinyint(1) | 0=정상 |
+| price | int | 기본가 |
+| wash_type | varchar(15) | 세차 유형 |
+
+---
+
+### payment
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int | PK |
+| user_id | int | FK → app_user.id |
+| type | varchar(25) | `VOUCHER`=1회권, `SUBSCRIPTION`=구독, `OPTION`=옵션, `PACKAGE`=패키지 |
+| status | varchar(25) | 집계 대상: `IN ('PAID','PARTIAL_CANCELED')` |
+| amount | int | 결제금액 **⚠️ 구독/횟수권 고객 75%는 payment 없음** |
+| cancel_amount | int | 취소금액 (PARTIAL_CANCELED 시 `amount-cancel_amount`=실매출) |
+| paid_at | datetime | 결제 완료일 |
+| name | varchar(250) | 상품명 (구독은 플랜명 포함, `'외 N개'` suffix 주의) |
+| deleted_yn | tinyint(1) | NULL 가능 — `IS NOT TRUE` 패턴 사용 |
