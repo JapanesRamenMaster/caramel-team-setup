@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 방문-시간-조율-요청-응대-기준.md
 source_section: CS 처리 기준 > 방문 시간 앞당기기/늦추기 조율 요청
 last_verified: 2026-06-25
+source_content_hash: 812f12dcf07b2da9
 ---
 
 ## 적용 조건 (when_to_use)

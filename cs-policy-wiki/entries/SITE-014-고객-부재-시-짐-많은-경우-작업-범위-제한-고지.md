@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 내부-세차-시-짐-처리-기준.md
 source_section: 짐 처리 순서 > 고객 부재 시 / 짐으로 인해 작업 범위 축소 시
 last_verified: 2026-06-25
+source_content_hash: d7976176e3709196
 ---
 
 ## 적용 조건 (when_to_use)

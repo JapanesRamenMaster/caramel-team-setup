@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 세차-서비스별-소요시간-기준.md
 source_section: 옵션 추가 시 추가 소요시간 (기준 시간에 합산)
 last_verified: 2026-06-25
+source_content_hash: a9130a037d7c2af0
 ---
 
 ## 적용 조건 (when_to_use)

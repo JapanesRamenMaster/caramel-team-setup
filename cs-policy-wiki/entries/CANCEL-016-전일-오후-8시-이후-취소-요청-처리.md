@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-당일-취소변경-문의-응대-기준.md
 source_section: CS 처리 기준 > 전일 오후 8시 이후 취소 / 고객 안내 문구 > 취소 문의
 last_verified: 2026-06-25
+source_content_hash: 8771420c00c188d3
 ---
 
 ## 적용 조건 (when_to_use)

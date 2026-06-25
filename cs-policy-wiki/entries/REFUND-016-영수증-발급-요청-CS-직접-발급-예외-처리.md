@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 영수증-발급-문의-응대-기준.md
 source_section: CS 처리 기준 > 예외: CS 직접 발급 (포트원 관리자 콘솔 활용)
 last_verified: 2026-06-25
+source_content_hash: 715c6b5f3347514d
 ---
 
 ## 적용 조건 (when_to_use)

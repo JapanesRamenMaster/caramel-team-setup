@@ -5,6 +5,7 @@ category: 세차기술교본
 source_file: 기본-점검-항목-및-방법.md
 source_section: 상세 내용 > 2. 타이어 점검
 last_verified: 2026-06-25
+source_content_hash: 1732705b987dd12c
 ---
 
 ## 적용 조건 (when_to_use)

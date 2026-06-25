@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 횟수권-가격-문의-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 1c4a533bb9fa2e44
 ---
 
 ## 적용 조건 (when_to_use)

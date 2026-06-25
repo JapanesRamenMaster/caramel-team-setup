@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 당일-출근-불가-시-보고-절차.md
 source_section: 당일-출근-불가-시-보고-절차.md > 상세 내용
 last_verified: 2026-06-25
+source_content_hash: bb9fe33ea8d9fb59
 ---
 
 ## 적용 조건 (when_to_use)

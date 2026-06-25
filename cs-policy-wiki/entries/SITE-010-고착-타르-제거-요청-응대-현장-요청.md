@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 고착-타르-제거-요청-고객-문의-응대-기준.md
 source_section: CS 처리 기준 > 고착 타르 제거 요청 (현장 요청)
 last_verified: 2026-06-25
+source_content_hash: a2fc38e8c6c16676
 ---
 
 ## 적용 조건 (when_to_use)

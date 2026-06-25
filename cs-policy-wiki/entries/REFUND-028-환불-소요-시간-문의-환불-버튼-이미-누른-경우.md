@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 환불-소요-시간-문의-시-응대-기준.md
 source_section: CS 처리 기준 > 환불 버튼을 누른 것이 확인된 경우
 last_verified: 2026-06-25
+source_content_hash: 80ea568eee0067e8
 ---
 
 ## 적용 조건 (when_to_use)

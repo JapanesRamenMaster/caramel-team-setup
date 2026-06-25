@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 세차-예약-시간-지각-문의-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: ed6986c5d66efff7
 ---
 
 ## 적용 조건 (when_to_use)

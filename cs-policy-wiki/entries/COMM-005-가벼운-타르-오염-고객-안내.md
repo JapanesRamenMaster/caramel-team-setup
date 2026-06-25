@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 고착-타르-제거-요청-고객-문의-응대-기준.md
 source_section: CS 처리 기준 > 가벼운 오염 수준인 경우
 last_verified: 2026-06-25
+source_content_hash: a2fc38e8c6c16676
 ---
 
 ## 적용 조건 (when_to_use)

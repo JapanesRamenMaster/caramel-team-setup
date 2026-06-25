@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 예약-취소-및-환불-규정.md
 source_section: 취소 기준 > 1회권
 last_verified: 2026-06-25
+source_content_hash: 4ceccbdac09c5ba7
 ---
 
 ## 적용 조건 (when_to_use)

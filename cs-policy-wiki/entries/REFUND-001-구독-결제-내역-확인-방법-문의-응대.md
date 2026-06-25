@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 구독-결제-내역-확인-방법-문의-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: c2959f93f65202ee
 ---
 
 ## 적용 조건 (when_to_use)

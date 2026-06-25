@@ -5,6 +5,7 @@ category: 일일업무프로세스
 source_file: 세차-단계별전중후-고객-소통-및-점검-루틴.md
 source_section: 상세 내용 > 세차 후 (최종 점검)
 last_verified: 2026-06-25
+source_content_hash: 05b1af0de12a29f4
 ---
 
 ## 적용 조건 (when_to_use)

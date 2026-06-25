@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-디테일러-및-차량-정보-확인-안내.md
 source_section: CS 처리 기준 > 담당 디테일러 정보 문의
 last_verified: 2026-06-25
+source_content_hash: 9630fe725ac582ae
 ---
 
 ## 적용 조건 (when_to_use)

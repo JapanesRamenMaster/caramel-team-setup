@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 틴팅썬팅액상-열차단-코팅-시공-후-세차-가능-여부-문의-응대-기준.md
 source_section: AI 참조용 — 안내 가이드 > 핵심 규격 / 고객 안내 문구 > [액상 열차단 코팅 시공 후 세차 문의]
 last_verified: 2026-06-25
+source_content_hash: 3eb9300f35ff3fbd
 ---
 
 ## 적용 조건 (when_to_use)

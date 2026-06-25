@@ -5,6 +5,7 @@ category: 차량운영
 source_file: 차량-및-장비-가이드-고장-시-대처-요령.md
 source_section: 차량 고장 > 주행 중 이상 감지 시
 last_verified: 2026-06-25
+source_content_hash: 91e4a5d0b1a6931c
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-내역-및-현황-확인-방법-안내.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 50ae373cb96dfdbb
 ---
 
 ## 적용 조건 (when_to_use)

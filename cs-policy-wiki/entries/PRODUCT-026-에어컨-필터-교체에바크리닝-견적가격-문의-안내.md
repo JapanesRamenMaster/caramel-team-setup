@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 에어컨-필터-교체에바크리닝-옵션-문의-응대-기준.md
 source_section: AI 참조용 — 안내 가이드 > 핵심 규격 > 견적·문의 방법 / CS 처리 기준 > 견적·가격 문의
 last_verified: 2026-06-25
+source_content_hash: 7a7596517f42c1bd
 ---
 
 ## 적용 조건 (when_to_use)

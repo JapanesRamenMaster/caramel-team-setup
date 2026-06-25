@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 부분-스크래치-교정-옵션-문의-응대-기준.md
 source_section: 부분-스크래치-교정-옵션-문의-응대-기준 > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: e075f977a276beb3
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 주차-공간-현장-접근-제지-대응-및-취소-안내-기준.md
 source_section: CS 응대 기준 > 현장 취소 수수료 이의 제기 / 현장 제지로 인한 취소 수수료
 last_verified: 2026-06-25
+source_content_hash: 77ec8958563217b8
 ---
 
 ## 적용 조건 (when_to_use)

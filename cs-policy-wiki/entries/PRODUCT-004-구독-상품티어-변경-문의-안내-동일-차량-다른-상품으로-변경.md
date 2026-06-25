@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 구독-상품-변경-문의-안내.md
 source_section: CS 처리 기준 > 동일 차량, 다른 상품으로 변경
 last_verified: 2026-06-25
+source_content_hash: 5faebaf410e537c6
 ---
 
 ## 적용 조건 (when_to_use)

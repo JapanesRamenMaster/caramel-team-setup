@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 타이어-공기압-주입워셔액-보충-서비스-안내.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: c35b80d3e40ba526
 ---
 
 ## 적용 조건 (when_to_use)

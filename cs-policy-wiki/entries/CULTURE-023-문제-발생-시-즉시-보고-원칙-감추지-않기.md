@@ -5,6 +5,7 @@ category: 문화/규정
 source_file: 카라멜-소통-문화-및-원칙.md
 source_section: 핵심 원칙 > 감추지 않기
 last_verified: 2026-06-25
+source_content_hash: 4d802bbd935ac212
 ---
 
 ## 적용 조건 (when_to_use)

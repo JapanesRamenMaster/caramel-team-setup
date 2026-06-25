@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 회원-탈퇴-방법-안내.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: c132ec471b09cb25
 ---
 
 ## 적용 조건 (when_to_use)

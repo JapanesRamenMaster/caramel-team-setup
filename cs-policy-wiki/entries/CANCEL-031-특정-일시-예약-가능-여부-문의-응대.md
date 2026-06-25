@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 특정-일시-등-예약-가능-일정-문의-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: b9ac59412815f9f8
 ---
 
 ## 적용 조건 (when_to_use)

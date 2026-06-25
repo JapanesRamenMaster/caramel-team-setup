@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 특정-장소-세차-가능-여부-문의-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 844afb49c632ca26
 ---
 
 ## 적용 조건 (when_to_use)

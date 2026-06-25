@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 구독-해지-및-일시-정지-문의-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구 > 해지·일시 정지 방법 문의 시
 last_verified: 2026-06-25
+source_content_hash: 12b79c1078a1711d
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 세차기술교본
 source_file: 시트-허벅지-익스텐션-조작-가이드.md
 source_section: 상세 내용 > 2. 주의점 (Caution)
 last_verified: 2026-06-25
+source_content_hash: 22e244be115437f0
 ---
 
 ## 적용 조건 (when_to_use)

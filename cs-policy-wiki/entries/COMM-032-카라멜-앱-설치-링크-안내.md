@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 카라멜-앱-설치-링크-안내.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 7a40e3be8ffd173e
 ---
 
 ## 적용 조건 (when_to_use)

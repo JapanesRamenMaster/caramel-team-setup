@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 세차로-인한-스월마크-발생-여부-문의-응대-기준.md
 source_section: 세차로-인한-스월마크-발생-여부-문의-응대-기준 > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: a76fd0acc33bf8e3
 ---
 
 ## 적용 조건 (when_to_use)

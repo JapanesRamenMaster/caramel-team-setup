@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 서비스-지역-문의-응대-기준.md
 source_section: CS 처리 기준 > 고객 안내 문구 > 2단계 — 서비스 불가인 경우
 last_verified: 2026-06-25
+source_content_hash: cae518288a42233a
 ---
 
 ## 적용 조건 (when_to_use)

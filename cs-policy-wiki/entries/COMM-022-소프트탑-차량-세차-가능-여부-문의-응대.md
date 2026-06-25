@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 소프트탑-차량-세차-가능-여부-문의-응대-기준.md
 source_section: 소프트탑-차량-세차-가능-여부-문의-응대-기준 > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 3942b54e681b3d9c
 ---
 
 ## 적용 조건 (when_to_use)

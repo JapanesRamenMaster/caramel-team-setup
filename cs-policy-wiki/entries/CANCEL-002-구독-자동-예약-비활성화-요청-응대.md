@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 구독-상품-자동-예약-관련-문의-응대-기준.md
 source_section: 고객 안내 문구 > 자동 예약을 끄고 싶다고 요청하는 경우
 last_verified: 2026-06-25
+source_content_hash: 562c0eb359e1bfc6
 ---
 
 ## 적용 조건 (when_to_use)

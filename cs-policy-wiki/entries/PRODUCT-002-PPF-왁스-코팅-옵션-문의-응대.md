@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: PPF-왁스-코팅-옵션-문의-응대-기준.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: a249977928a1ac99
 ---
 
 ## 적용 조건 (when_to_use)

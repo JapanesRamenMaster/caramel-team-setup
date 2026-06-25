@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 차량-추가-등록-방법-안내.md
 source_section: 차량-추가-등록-방법-안내.md > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 1ef45df00a279c79
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 정비/영업
 source_file: 정비-전환-프로세스.md
 source_section: 상세 내용 > 프로세스
 last_verified: 2026-06-25
+source_content_hash: e0d4b62fb29f188c
 ---
 
 ## 적용 조건 (when_to_use)

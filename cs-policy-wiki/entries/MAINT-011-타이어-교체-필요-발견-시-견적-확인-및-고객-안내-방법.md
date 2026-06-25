@@ -5,6 +5,7 @@ category: 정비/영업
 source_file: 타이어-견적-안내-방법.md
 source_section: 상세 내용 > 견적 확인 방법 / 고객 안내 가격
 last_verified: 2026-06-25
+source_content_hash: d7ebf6f8c519ba52
 ---
 
 ## 적용 조건 (when_to_use)

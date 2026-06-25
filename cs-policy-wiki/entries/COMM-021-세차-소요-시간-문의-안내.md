@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 세차-소요-시간-문의-응대-기준.md
 source_section: AI 참조용 — 안내 가이드
 last_verified: 2026-06-25
+source_content_hash: fdbfea99d303e616
 ---
 
 ## 적용 조건 (when_to_use)

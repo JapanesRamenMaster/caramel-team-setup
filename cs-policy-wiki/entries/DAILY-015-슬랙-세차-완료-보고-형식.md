@@ -5,6 +5,7 @@ category: 일일업무프로세스
 source_file: 슬랙-채널-보고-가이드.md
 source_section: 상세 내용 > 세차 완료 보고 형식
 last_verified: 2026-06-25
+source_content_hash: aa39669981c122c6
 ---
 
 ## 적용 조건 (when_to_use)

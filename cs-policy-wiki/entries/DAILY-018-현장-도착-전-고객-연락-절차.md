@@ -5,6 +5,7 @@ category: 일일업무프로세스
 source_file: 현장-도착-및-고객-응대.md
 source_section: 현장 도착 전 — 고객 연락
 last_verified: 2026-06-25
+source_content_hash: 99fdcd2a12c4318c
 ---
 
 ## 적용 조건 (when_to_use)

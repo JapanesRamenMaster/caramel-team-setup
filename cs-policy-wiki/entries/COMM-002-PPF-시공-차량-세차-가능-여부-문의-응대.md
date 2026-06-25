@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: PPF-시공-차량-세차-가능-여부-및-고객-안내-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 4e2fef5c1b2bde7e
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 고객-직접-방문-세차-불가-안내.md
 source_section: 고객-직접-방문-세차-불가-안내.md > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: ba6f8c97d1e91250
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 온보딩/HR
 source_file: 퇴사-프로세스-및-자산-반납-가이드.md
 source_section: 퇴사 정산
 last_verified: 2026-06-25
+source_content_hash: 91bb132a79399615
 ---
 
 ## 적용 조건 (when_to_use)

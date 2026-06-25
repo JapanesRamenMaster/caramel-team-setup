@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 포인트-결제-사용-안내.md
 source_section: 고객 안내 문구 > 케이스 2: 구독 자동결제 시 포인트 사용 문의
 last_verified: 2026-06-25
+source_content_hash: 4d2985d75cac15f7
 ---
 
 ## 적용 조건 (when_to_use)

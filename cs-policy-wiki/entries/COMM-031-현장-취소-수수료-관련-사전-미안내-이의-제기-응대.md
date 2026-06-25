@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 주차-공간-현장-접근-제지-대응-및-취소-안내-기준.md
 source_section: CS 응대 기준 > '왜 사전에 안내 안 했냐' 문의
 last_verified: 2026-06-25
+source_content_hash: 77ec8958563217b8
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 세차-상품-및-범위.md
 source_section: 상세 내용 > 올클린 케어 > 세차 범위 (외부)
 last_verified: 2026-06-25
+source_content_hash: 7cf4f810b1d7ed4b
 ---
 
 ## 적용 조건 (when_to_use)

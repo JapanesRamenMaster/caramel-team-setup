@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 석회수워터스팟-자국-제거-문의-응대-기준.md
 source_section: 석회수워터스팟-자국-제거-문의-응대-기준 > CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 1a4856bb32e620e1
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 문화/규정
 source_file: 4월-인센티브-정책.md
 source_section: 상세 내용 > 2. 60분 공정 인센티브 종료
 last_verified: 2026-06-25
+source_content_hash: 031100073a15b17e
 ---
 
 ## 적용 조건 (when_to_use)

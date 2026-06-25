@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 카시트-케어-옵션-안내.md
 source_section: 카시트-케어-옵션-안내.md > 고객 안내 문구 > 유의사항
 last_verified: 2026-06-25
+source_content_hash: df6c9c81e9571172
 ---
 
 ## 적용 조건 (when_to_use)

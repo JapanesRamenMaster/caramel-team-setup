@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 지각-및-시간-초과-대응.md
 source_section: 고객이 늦는 경우 / 키를 늦게 인계한 경우 > 다음 타임에 세차 예약이 없는 경우
 last_verified: 2026-06-25
+source_content_hash: 0c63b8a338970297
 ---
 
 ## 적용 조건 (when_to_use)

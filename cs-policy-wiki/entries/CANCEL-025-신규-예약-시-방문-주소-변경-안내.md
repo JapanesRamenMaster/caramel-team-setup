@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-주소-변경-요청-시-응대-기준.md
 source_section: CS 처리 기준 > 케이스 2. 신규 예약 시 주소 변경
 last_verified: 2026-06-25
+source_content_hash: 451f7c0f412dd268
 ---
 
 ## 적용 조건 (when_to_use)

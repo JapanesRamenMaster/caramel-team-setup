@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 무광-및-PPF-차량-전용-세차-가이드.md
 source_section: 상세 내용 > 1. 필수공정 (Standard) > 고객 응대 원칙
 last_verified: 2026-06-25
+source_content_hash: 30d159e023a053b9
 ---
 
 ## 적용 조건 (when_to_use)

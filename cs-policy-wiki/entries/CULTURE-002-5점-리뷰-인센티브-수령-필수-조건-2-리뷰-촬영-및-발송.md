@@ -5,6 +5,7 @@ category: 문화/규정
 source_file: 5점-리뷰-인센티브-정책-월별-갱신.md
 source_section: 상세 내용 > 인센티브 수령 필수 조건 2 (리뷰 촬영 및 발송)
 last_verified: 2026-06-25
+source_content_hash: 6f030c48c949fe8f
 ---
 
 ## 적용 조건 (when_to_use)

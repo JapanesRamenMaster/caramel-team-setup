@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 유료-옵션-가이드.md
 source_section: 현장 처리 방법
 last_verified: 2026-06-25
+source_content_hash: 830671e8d81fc85d
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 우천/계절
 source_file: 취소환불-기준-디테일러용.md
 source_section: CS 처리 기준 > 전액 환불(100%) 되는 경우 > 세차 도중 비가 오는 경우
 last_verified: 2026-06-25
+source_content_hash: 9e1ac2d228c1ed73
 ---
 
 ## 적용 조건 (when_to_use)

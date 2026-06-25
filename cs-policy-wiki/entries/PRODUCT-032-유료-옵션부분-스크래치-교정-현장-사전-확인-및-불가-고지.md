@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 옵션-진행-불가-시-처리-기준.md
 source_section: 상세 내용 > 유료 옵션 사전 확인 (필수) > 부분 스크래치 교정 옵션
 last_verified: 2026-06-25
+source_content_hash: 52c75da2648e6daf
 ---
 
 ## 적용 조건 (when_to_use)

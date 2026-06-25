@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 구독-결제일-변경-문의-응대-기준.md
 source_section: CS 내부 처리 기준 > 결제일 늦추기 요청 / 고객 안내 문구 > 결제일 늦추기
 last_verified: 2026-06-25
+source_content_hash: 1484251df0efafe2
 ---
 
 ## 적용 조건 (when_to_use)

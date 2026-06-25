@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 외부-세차-차키-전달-필요-여부-문의-응대-기준.md
 source_section: 외부-세차-차키-전달-필요-여부-문의-응대-기준 > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 6ade9670ee4a1dce
 ---
 
 ## 적용 조건 (when_to_use)

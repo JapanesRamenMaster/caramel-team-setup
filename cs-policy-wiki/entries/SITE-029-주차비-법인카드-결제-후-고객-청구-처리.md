@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 주차-관련-문제-대응.md
 source_section: 상세 내용 > 법인카드로 결제한 경우
 last_verified: 2026-06-25
+source_content_hash: ae81f121107f325f
 ---
 
 ## 적용 조건 (when_to_use)

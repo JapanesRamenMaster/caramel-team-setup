@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 외부-세차-예약-후-내부-세차-추가-방법-안내.md
 source_section: 예외 사항
 last_verified: 2026-06-25
+source_content_hash: 91631b14e62c1ae5
 ---
 
 ## 적용 조건 (when_to_use)

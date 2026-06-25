@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 현장-옵션-추가-가능-여부-문의-응대-기준.md
 source_section: CS 처리 기준 > 앱에 노출되지 않는 현장 전용 옵션
 last_verified: 2026-06-25
+source_content_hash: f7d4ce4bbd2b7c09
 ---
 
 ## 적용 조건 (when_to_use)

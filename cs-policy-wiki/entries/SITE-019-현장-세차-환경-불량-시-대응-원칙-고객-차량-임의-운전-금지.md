@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 세차-어려운-환경-대응.md
 source_section: 핵심 원칙: 고객 차량 임의 운전 금지
 last_verified: 2026-06-25
+source_content_hash: 703247b51479a8c9
 ---
 
 ## 적용 조건 (when_to_use)

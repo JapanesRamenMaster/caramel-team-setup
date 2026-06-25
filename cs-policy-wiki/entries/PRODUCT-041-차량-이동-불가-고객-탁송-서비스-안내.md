@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 차량-수리정비-문의-응대-기준.md
 source_section: CS 처리 기준 > 차량 이동 불가 고객
 last_verified: 2026-06-25
+source_content_hash: 6b0f0b0c1470b165
 ---
 
 ## 적용 조건 (when_to_use)

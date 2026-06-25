@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 내부-세차-시-짐-처리-기준.md
 source_section: 짐 처리 순서 > 세차 전 사전 확인 / 고객에게 이동 요청
 last_verified: 2026-06-25
+source_content_hash: d7976176e3709196
 ---
 
 ## 적용 조건 (when_to_use)

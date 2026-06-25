@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 취소환불-기준-디테일러용.md
 source_section: CS 처리 기준 > 기본 원칙
 last_verified: 2026-06-25
+source_content_hash: 9e1ac2d228c1ed73
 ---
 
 ## 적용 조건 (when_to_use)

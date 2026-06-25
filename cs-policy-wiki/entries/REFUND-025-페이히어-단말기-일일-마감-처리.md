@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 페이히어-카드-단말기-사용-가이드.md
 source_section: 일일 마감
 last_verified: 2026-06-25
+source_content_hash: ffb914f5b3e157c1
 ---
 
 ## 적용 조건 (when_to_use)

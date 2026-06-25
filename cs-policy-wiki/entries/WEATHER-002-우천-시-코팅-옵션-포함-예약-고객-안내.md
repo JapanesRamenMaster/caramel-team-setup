@@ -5,6 +5,7 @@ category: 우천/계절
 source_file: 비-오는-날-디테일러-대응-가이드.md
 source_section: 코팅 옵션 포함 예약 시 (유리막 코팅 / 발수 코팅)
 last_verified: 2026-06-25
+source_content_hash: 5e0156d5646c2c37
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 구독-상품-자동예약-시스템-안내.md
 source_section: 고객 안내 문구 > [케이스 2] 예약한 적 없는데 예약이 생겼다는 문의 시
 last_verified: 2026-06-25
+source_content_hash: 0f8e5b658c263ed7
 ---
 
 ## 적용 조건 (when_to_use)

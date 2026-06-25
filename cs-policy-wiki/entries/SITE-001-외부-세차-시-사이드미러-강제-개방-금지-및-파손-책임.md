@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 4월-적용-외부-세차-범위-확대-및-키-수령-관련-지침.md
 source_section: 상세 내용 > 2. 현장 주의사항 및 책임 소재
 last_verified: 2026-06-25
+source_content_hash: 33be20d10858662c
 ---
 
 ## 적용 조건 (when_to_use)
