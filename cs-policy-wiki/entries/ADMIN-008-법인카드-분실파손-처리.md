@@ -5,6 +5,7 @@ category: 경비/행정
 source_file: 법인카드-사용-및-정산-가이드라인.md
 source_section: 상세 내용 > 카드 분실·파손
 last_verified: 2026-06-25
+source_content_hash: 97d2877f119a533a
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 일일업무프로세스
 source_file: 세차-전-준비-및-출발.md
 source_section: 전일/출발 전 준비 > 세차/정비 장비 이상 유무 및 약제/도구 보유량 체크
 last_verified: 2026-06-25
+source_content_hash: cebfa7b200403a76
 ---
 
 ## 적용 조건 (when_to_use)

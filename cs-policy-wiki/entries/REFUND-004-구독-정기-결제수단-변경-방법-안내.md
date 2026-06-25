@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 구독-결제수단-변경-방법-문의-안내.md
 source_section: 구독-결제수단-변경-방법-문의-안내.md > 전체
 last_verified: 2026-06-25
+source_content_hash: a545f4059f5683b0
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 아파트-입차-제한-대응-가이드.md
 source_section: 상세 내용 > 1단계~4단계
 last_verified: 2026-06-25
+source_content_hash: 3a8432796b53f98e
 ---
 
 ## 적용 조건 (when_to_use)

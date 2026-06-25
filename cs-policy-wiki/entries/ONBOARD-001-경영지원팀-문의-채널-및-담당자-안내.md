@@ -5,6 +5,7 @@ category: 온보딩/HR
 source_file: 경영지원팀-커뮤니케이션-가이드.md
 source_section: 문의 채널 / 주요 담당자 / 주의사항
 last_verified: 2026-06-25
+source_content_hash: 1ac22119ebf79caf
 ---
 
 ## 적용 조건 (when_to_use)

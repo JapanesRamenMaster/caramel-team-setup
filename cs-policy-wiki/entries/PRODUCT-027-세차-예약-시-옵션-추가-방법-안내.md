@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 옵션-추가-방법-안내.md
 source_section: 옵션 유형 안내 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 8f9e46e6dfa01d7e
 ---
 
 ## 적용 조건 (when_to_use)

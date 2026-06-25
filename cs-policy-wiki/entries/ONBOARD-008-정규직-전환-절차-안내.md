@@ -5,6 +5,7 @@ category: 온보딩/HR
 source_file: 정규직-전환-온보딩-가이드.md
 source_section: 상세 내용 > 절차
 last_verified: 2026-06-25
+source_content_hash: 7c3ac2f2ff5d3734
 ---
 
 ## 적용 조건 (when_to_use)

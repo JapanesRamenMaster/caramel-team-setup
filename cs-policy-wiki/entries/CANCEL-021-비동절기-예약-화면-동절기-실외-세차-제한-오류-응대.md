@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-화면-동절기-실외-세차-제한-오류-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: e4ca3cbc500c107c
 ---
 
 ## 적용 조건 (when_to_use)

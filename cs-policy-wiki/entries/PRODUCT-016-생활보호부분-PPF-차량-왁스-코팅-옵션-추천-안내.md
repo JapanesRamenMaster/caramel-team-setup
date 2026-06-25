@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 생활보호부분-PPF-차량-왁스-옵션-추가-문의-응대-기준.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: e8f4a785bfa9b8ad
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 정비/영업
 source_file: 차량-매입매도-문의-대응.md
 source_section: 상세 내용 > 매도
 last_verified: 2026-06-25
+source_content_hash: 1961cec148230cc9
 ---
 
 ## 적용 조건 (when_to_use)

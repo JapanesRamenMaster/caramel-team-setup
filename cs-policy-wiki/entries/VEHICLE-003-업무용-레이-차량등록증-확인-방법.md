@@ -5,6 +5,7 @@ category: 차량운영
 source_file: 업무용-레이-차량-대차-및-신규-차량-인수-시-기록-지침.md
 source_section: 상세 내용 > 4. 차량등록증 확인 방법
 last_verified: 2026-06-25
+source_content_hash: 56200f899696b3f3
 ---
 
 ## 적용 조건 (when_to_use)

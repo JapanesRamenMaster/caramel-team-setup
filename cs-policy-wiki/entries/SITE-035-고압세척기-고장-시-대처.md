@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 차량-및-장비-가이드-고장-시-대처-요령.md
 source_section: 세차 장비 고장 > 고압세척기
 last_verified: 2026-06-25
+source_content_hash: 91e4a5d0b1a6931c
 ---
 
 ## 적용 조건 (when_to_use)

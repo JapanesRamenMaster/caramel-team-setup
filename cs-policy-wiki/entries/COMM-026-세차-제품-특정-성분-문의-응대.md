@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 세차-제품-안전성-문의-응대.md
 source_section: CS 처리 기준 > 특정 성분 문의
 last_verified: 2026-06-25
+source_content_hash: 02962f1a794f086a
 ---
 
 ## 적용 조건 (when_to_use)

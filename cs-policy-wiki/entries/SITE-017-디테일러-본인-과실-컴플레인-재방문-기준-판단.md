@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 본인-과실-컴플레인-처리-책임-및-재방문-기준.md
 source_section: 재방문 기준
 last_verified: 2026-06-25
+source_content_hash: 8daf79d7a8cb206f
 ---
 
 ## 적용 조건 (when_to_use)

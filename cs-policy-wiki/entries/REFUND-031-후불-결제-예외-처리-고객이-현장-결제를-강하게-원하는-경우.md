@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 후불-결제-가능-여부-문의-응대-기준.md
 source_section: CS 처리 기준 > 예외 — 고객이 현장 결제를 강하게 원하는 경우
 last_verified: 2026-06-25
+source_content_hash: be6755715b90246a
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 세차-서비스별-소요시간-기준.md
 source_section: 고객 안내 기준
 last_verified: 2026-06-25
+source_content_hash: a9130a037d7c2af0
 ---
 
 ## 적용 조건 (when_to_use)

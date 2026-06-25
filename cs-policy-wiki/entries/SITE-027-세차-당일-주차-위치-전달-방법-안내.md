@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 주차-위치-등록변경-방법-안내.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 081574487e4ed685
 ---
 
 ## 적용 조건 (when_to_use)

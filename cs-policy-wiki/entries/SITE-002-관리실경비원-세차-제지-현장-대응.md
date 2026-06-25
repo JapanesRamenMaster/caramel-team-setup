@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 관리실-세차-제지-대응-가이드.md
 source_section: 대응 절차 / 고객 안내 멘트 / 보고 방법
 last_verified: 2026-06-25
+source_content_hash: 1a82bdf522413f4e
 ---
 
 ## 적용 조건 (when_to_use)

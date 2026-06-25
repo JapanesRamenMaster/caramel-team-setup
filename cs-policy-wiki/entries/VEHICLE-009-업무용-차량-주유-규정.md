@@ -5,6 +5,7 @@ category: 차량운영
 source_file: 회사-차량-운영-및-주유-규정.md
 source_section: 상세 내용 > 주유 규정
 last_verified: 2026-06-25
+source_content_hash: db91d199ea3e7b63
 ---
 
 ## 적용 조건 (when_to_use)

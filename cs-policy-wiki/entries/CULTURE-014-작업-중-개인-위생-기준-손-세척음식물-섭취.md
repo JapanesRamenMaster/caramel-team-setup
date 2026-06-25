@@ -5,6 +5,7 @@ category: 문화/규정
 source_file: 복장-및-용모-규정.md
 source_section: 복장-및-용모-규정 > 개인 위생
 last_verified: 2026-06-25
+source_content_hash: b7a24fc088e56b29
 ---
 
 ## 적용 조건 (when_to_use)

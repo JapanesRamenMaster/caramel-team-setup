@@ -5,6 +5,7 @@ category: 우천/계절
 source_file: 비-오는-날-디테일러-대응-가이드.md
 source_section: 우천 취소·재예약 안내 시 고객 문구
 last_verified: 2026-06-25
+source_content_hash: 5e0156d5646c2c37
 ---
 
 ## 적용 조건 (when_to_use)

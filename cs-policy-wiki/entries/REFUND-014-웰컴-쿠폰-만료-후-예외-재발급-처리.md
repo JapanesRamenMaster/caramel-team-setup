@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 신규-가입-웰컴-쿠폰-안내-및-만료-문의-응대-기준.md
 source_section: CS 처리 기준 > 케이스 3: 미수긍 시 예외 재발급
 last_verified: 2026-06-25
+source_content_hash: 10683de035fe2f4f
 ---
 
 ## 적용 조건 (when_to_use)

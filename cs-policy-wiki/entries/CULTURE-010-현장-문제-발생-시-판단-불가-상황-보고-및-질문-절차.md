@@ -5,6 +5,7 @@ category: 문화/규정
 source_file: 문제-발생-시-소명-방식-및-해결-원칙.md
 source_section: 상세 내용 > 3. 보고 및 질문
 last_verified: 2026-06-25
+source_content_hash: 69f0b92db22421c9
 ---
 
 ## 적용 조건 (when_to_use)

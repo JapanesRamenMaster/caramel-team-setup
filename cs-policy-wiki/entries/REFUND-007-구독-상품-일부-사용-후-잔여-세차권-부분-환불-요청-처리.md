@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 구독-상품-부분-환불-요청-응대-기준.md
 source_section: 구독-상품-부분-환불-요청-응대-기준 > CS 처리 기준 전체
 last_verified: 2026-06-25
+source_content_hash: 20b612ce1de1a821
 ---
 
 ## 적용 조건 (when_to_use)

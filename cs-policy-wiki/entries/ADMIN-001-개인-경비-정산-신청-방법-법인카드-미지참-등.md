@@ -5,6 +5,7 @@ category: 경비/행정
 source_file: 개인경비-정산-규정.md
 source_section: 개인경비-정산-규정 > 신청 방법
 last_verified: 2026-06-25
+source_content_hash: b781fcb4624219b9
 ---
 
 ## 적용 조건 (when_to_use)

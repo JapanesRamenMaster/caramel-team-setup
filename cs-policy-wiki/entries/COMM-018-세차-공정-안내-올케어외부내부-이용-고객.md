@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 세차-기본-공정-안내.md
 source_section: 고객 안내 문구 > [케이스 2] 올케어(외부+내부) 이용 고객
 last_verified: 2026-06-25
+source_content_hash: b55243c9bb0df41d
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 서비스-지역-문의-응대-기준.md
 source_section: CS 처리 기준 > 고객 안내 문구 > 1단계 — 시/구/동 안내 요청
 last_verified: 2026-06-25
+source_content_hash: cae518288a42233a
 ---
 
 ## 적용 조건 (when_to_use)

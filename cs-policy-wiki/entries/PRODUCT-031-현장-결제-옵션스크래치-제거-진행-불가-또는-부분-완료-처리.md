@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 옵션-진행-불가-시-처리-기준.md
 source_section: 상세 내용 > 현장 결제 옵션을 진행할 수 없는 경우 > 스크래치 제거
 last_verified: 2026-06-25
+source_content_hash: 52c75da2648e6daf
 ---
 
 ## 적용 조건 (when_to_use)

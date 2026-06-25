@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-확정-알림톡-수신-후-문의-응대-기준.md
 source_section: 예약-확정-알림톡-수신-후-문의-응대-기준 > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: df51295d0ce92882
 ---
 
 ## 적용 조건 (when_to_use)

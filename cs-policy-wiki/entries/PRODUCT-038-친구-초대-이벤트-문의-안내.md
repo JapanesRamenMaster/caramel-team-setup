@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 친구-초대-이벤트-안내.md
 source_section: 고객 안내 문구 > 친구 초대 이벤트 문의 시
 last_verified: 2026-06-25
+source_content_hash: b84b2aef1a7a55b1
 ---
 
 ## 적용 조건 (when_to_use)

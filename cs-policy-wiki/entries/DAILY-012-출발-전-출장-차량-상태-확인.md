@@ -5,6 +5,7 @@ category: 일일업무프로세스
 source_file: 세차-전-준비-및-출발.md
 source_section: 전일/출발 전 준비 > 출장 차량 상태 확인
 last_verified: 2026-06-25
+source_content_hash: cebfa7b200403a76
 ---
 
 ## 적용 조건 (when_to_use)

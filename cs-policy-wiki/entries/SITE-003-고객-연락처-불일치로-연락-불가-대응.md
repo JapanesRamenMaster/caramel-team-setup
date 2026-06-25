@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 고객-정보-불일치-대응.md
 source_section: 고객 번호가 일치하지 않아 연락이 되지 않는 경우
 last_verified: 2026-06-25
+source_content_hash: 6094020c6477be90
 ---
 
 ## 적용 조건 (when_to_use)

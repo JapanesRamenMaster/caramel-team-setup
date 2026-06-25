@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 내부-단독-세차-이용-가능-여부-안내.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: fe865953d52ad497
 ---
 
 ## 적용 조건 (when_to_use)

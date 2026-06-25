@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 외부-부착-악세서리루프박스루프랙-세차-범위-안내.md
 source_section: AI 참조용 — 안내 가이드 > 핵심 규격 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: f4c23f18cad3e9ec
 ---
 
 ## 적용 조건 (when_to_use)

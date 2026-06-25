@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 추가-결제-및-현장-옵션-처리.md
 source_section: 상세 내용 > 차량 상태가 나빠 추가 결제가 필요한 경우
 last_verified: 2026-06-25
+source_content_hash: 968eecc7aa9400a4
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 차량운영
 source_file: 업무용-레이-차량-대차-및-신규-차량-인수-시-기록-지침.md
 source_section: 상세 내용 > 1. 인수확인서 작성 / 2. 증거 자료 확보 / 3. 슬랙 업로드 및 태그 보고
 last_verified: 2026-06-25
+source_content_hash: 56200f899696b3f3
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 차량-전체-살균-옵션-문의-응대-기준.md
 source_section: 차량-전체-살균-옵션-문의-응대-기준 > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 13cccd67f011ffcf
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-변경취소-요청-대응.md
 source_section: 고객이 일정 변경을 요청하는 경우 > 당일이 아닌 경우
 last_verified: 2026-06-25
+source_content_hash: 3b53ba6251623db5
 ---
 
 ## 적용 조건 (when_to_use)

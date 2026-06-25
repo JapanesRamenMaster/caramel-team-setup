@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 구독-상품-종류-및-가격-문의-안내.md
 source_section: 구독-상품-종류-및-가격-문의-안내.md > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: ab1f22404e639476
 ---
 
 ## 적용 조건 (when_to_use)

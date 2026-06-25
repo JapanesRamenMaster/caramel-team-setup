@@ -5,6 +5,7 @@ category: 세차기술교본
 source_file: 무광-및-PPF-차량-전용-세차-가이드.md
 source_section: 상세 내용 > 2. 주의점 (Caution) > 무광 차량 금지 사항
 last_verified: 2026-06-25
+source_content_hash: 30d159e023a053b9
 ---
 
 ## 적용 조건 (when_to_use)

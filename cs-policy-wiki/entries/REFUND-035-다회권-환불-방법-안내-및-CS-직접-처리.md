@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 환불-방법-문의-시-응대-기준.md
 source_section: CS 처리 기준 / 고객 안내 문구 > 다회권 / 내부 처리 절차 (다회권)
 last_verified: 2026-06-25
+source_content_hash: 51093733a48aeaca
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 구독-자동갱신-결제-실패-안내-및-응대-기준.md
 source_section: 결제 실패 시 처리 흐름 > 재시도 로직 / CS 응대 기준
 last_verified: 2026-06-25
+source_content_hash: 876d169c9a93e12b
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 고객-노쇼-대응.md
 source_section: 케이스 1: 통화 불가 + 차량은 찾을 수 있는 경우 > 키를 찾을 수 없는 경우
 last_verified: 2026-06-25
+source_content_hash: 554b7c0ba78f7a3d
 ---
 
 ## 적용 조건 (when_to_use)

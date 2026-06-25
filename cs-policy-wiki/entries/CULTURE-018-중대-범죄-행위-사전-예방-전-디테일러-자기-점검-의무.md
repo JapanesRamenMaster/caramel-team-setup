@@ -5,6 +5,7 @@ category: 문화/규정
 source_file: 중대-범죄-행위-무관용-원칙.md
 source_section: 3. 전 임직원 필독 및 재점검 사항
 last_verified: 2026-06-25
+source_content_hash: 2cafb43841aa9f57
 ---
 
 ## 적용 조건 (when_to_use)

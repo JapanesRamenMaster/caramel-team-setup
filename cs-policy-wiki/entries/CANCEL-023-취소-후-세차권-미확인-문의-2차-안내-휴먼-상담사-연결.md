@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-취소-후-세차권-미복구-문의-응대-기준.md
 source_section: CS 처리 기준 > 2차: 고객이 재확인 후에도 세차권이 없다고 하는 경우
 last_verified: 2026-06-25
+source_content_hash: 1485ad33cd292b41
 ---
 
 ## 적용 조건 (when_to_use)

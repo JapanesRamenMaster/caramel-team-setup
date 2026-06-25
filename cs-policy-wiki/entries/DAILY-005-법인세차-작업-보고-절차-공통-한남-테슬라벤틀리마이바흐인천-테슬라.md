@@ -5,6 +5,7 @@ category: 일일업무프로세스
 source_file: 법인세차-작업-보고-절차.md
 source_section: 상세 내용 > 1. 공통 보고 절차 (헤이딜러 제외)
 last_verified: 2026-06-25
+source_content_hash: b0dc6131b9320de3
 ---
 
 ## 적용 조건 (when_to_use)

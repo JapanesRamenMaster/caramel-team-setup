@@ -5,6 +5,7 @@ category: 정비/영업
 source_file: 정비-가격표-및-업체-리스트.md
 source_section: 상세 내용 > 고정 가격 안내 가능 항목
 last_verified: 2026-06-25
+source_content_hash: 39aa75b3877baecf
 ---
 
 ## 적용 조건 (when_to_use)

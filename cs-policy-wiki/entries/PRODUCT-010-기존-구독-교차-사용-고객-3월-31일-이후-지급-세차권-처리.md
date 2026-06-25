@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 기존-구독-교차-사용-고객-정책-변경-안내.md
 source_section: CS 처리 기준 > 3월 31일 이후 지급된 세차권
 last_verified: 2026-06-25
+source_content_hash: 6a44df47bcdca09d
 ---
 
 ## 적용 조건 (when_to_use)

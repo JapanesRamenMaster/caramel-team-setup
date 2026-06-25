@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 차키-전달-방법-안내.md
 source_section: 차키-전달-방법-안내.md > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: cbfd7399c70e1d84
 ---
 
 ## 적용 조건 (when_to_use)

@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 세차-서비스-운영-시간-안내.md
 source_section: CS 처리 기준 > 특정 시간 예약 안 된다는 문의
 last_verified: 2026-06-25
+source_content_hash: 916c7e791f3e484f
 ---
 
 ## 적용 조건 (when_to_use)

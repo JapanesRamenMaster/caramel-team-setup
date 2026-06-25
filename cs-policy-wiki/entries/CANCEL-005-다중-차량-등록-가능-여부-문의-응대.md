@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 다중-차량-등록-문의-응대-기준.md
 source_section: CS 처리 기준 > 다중 차량 등록 가능 여부 문의
 last_verified: 2026-06-25
+source_content_hash: e6a6868c712e0475
 ---
 
 ## 적용 조건 (when_to_use)

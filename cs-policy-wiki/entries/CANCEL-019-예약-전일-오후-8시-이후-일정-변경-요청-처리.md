@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-일정-변경-문의-응대-기준.md
 source_section: CS 처리 기준 > 예약 전일 오후 8시 이후
 last_verified: 2026-06-25
+source_content_hash: 94f7066ed0cf25e6
 ---
 
 ## 적용 조건 (when_to_use)

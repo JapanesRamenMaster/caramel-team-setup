@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 세차-예약-방법-문의-응대-기준.md
 source_section: 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: ab42f837ecf52cc4
 ---
 
 ## 적용 조건 (when_to_use)

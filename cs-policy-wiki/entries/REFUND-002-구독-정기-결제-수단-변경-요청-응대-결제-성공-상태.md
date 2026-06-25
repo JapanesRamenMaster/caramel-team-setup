@@ -5,6 +5,7 @@ category: 결제/환불
 source_file: 구독-결제-정보-변경-요청-응대-기준.md
 source_section: CS 처리 기준 > 일반 상황 (결제 성공 상태)
 last_verified: 2026-06-25
+source_content_hash: 69914644e0782ca6
 ---
 
 ## 적용 조건 (when_to_use)

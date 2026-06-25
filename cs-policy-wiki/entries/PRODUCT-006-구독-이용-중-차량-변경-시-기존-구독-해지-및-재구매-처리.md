@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 구독-이용-중-차량-변경-문의-응대-기준.md
 source_section: CS 처리 기준
 last_verified: 2026-06-25
+source_content_hash: f9719d113d51c23e
 ---
 
 ## 적용 조건 (when_to_use)

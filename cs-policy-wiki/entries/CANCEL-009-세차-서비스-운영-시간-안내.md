@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 세차-서비스-운영-시간-안내.md
 source_section: AI 참조용 — 안내 가이드 > 핵심 규격 / 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 916c7e791f3e484f
 ---
 
 ## 적용 조건 (when_to_use)

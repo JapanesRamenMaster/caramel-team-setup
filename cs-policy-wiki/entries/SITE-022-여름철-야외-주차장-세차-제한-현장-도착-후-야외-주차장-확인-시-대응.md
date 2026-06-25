@@ -5,6 +5,7 @@ category: 현장대응
 source_file: 여름철-야외-주차장-세차-제한-한시.md
 source_section: CS 처리 기준 > 현장에서 야외 주차장으로 확인된 경우 / 상세 내용 (디테일러 현장 대응)
 last_verified: 2026-06-25
+source_content_hash: 4bd4ce094973a1a7
 ---
 
 ## 적용 조건 (when_to_use)

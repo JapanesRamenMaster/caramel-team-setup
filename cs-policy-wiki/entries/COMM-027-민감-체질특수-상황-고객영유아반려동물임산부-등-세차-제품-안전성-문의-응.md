@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 세차-제품-안전성-문의-응대.md
 source_section: CS 처리 기준 > 민감 체질 / 특수 상황 (영유아, 반려동물, 임산부 등) / 대체 세차 방식 안내
 last_verified: 2026-06-25
+source_content_hash: 02962f1a794f086a
 ---
 
 ## 적용 조건 (when_to_use)

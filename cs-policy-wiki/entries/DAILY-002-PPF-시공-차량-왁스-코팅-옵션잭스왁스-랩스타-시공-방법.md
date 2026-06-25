@@ -5,6 +5,7 @@ category: 일일업무프로세스
 source_file: PPF-시공-차량-세차-공정-주의사항-및-전용-옵션-시공-방법.md
 source_section: 상세 내용 > PPF 왁스 코팅 옵션 시공 방법
 last_verified: 2026-06-25
+source_content_hash: 541acaf80f1b2205
 ---
 
 ## 적용 조건 (when_to_use)

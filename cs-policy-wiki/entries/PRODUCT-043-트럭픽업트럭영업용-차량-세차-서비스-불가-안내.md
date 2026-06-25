@@ -5,6 +5,7 @@ category: 상품/옵션/가격
 source_file: 트럭픽업트럭영업용-차량-세차-불가-안내.md
 source_section: 트럭픽업트럭영업용-차량-세차-불가-안내.md > 고객 안내 문구
 last_verified: 2026-06-25
+source_content_hash: 305a568d3a2fbf79
 ---
 
 ## 적용 조건 (when_to_use)

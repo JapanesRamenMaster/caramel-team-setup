@@ -5,6 +5,7 @@ category: 고객커뮤니케이션
 source_file: 리뷰-내-번호판-노출-사진-삭제-요청-처리-기준.md
 source_section: CS 처리 기준 / 내부 처리 절차
 last_verified: 2026-06-25
+source_content_hash: 50ddf5ffbc091329
 ---
 
 ## 적용 조건 (when_to_use)

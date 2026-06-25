@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 예약-취소-후-세차권-미복구-문의-응대-기준.md
 source_section: CS 처리 기준 > 1차: 세차권 확인 위치 안내
 last_verified: 2026-06-25
+source_content_hash: 1485ad33cd292b41
 ---
 
 ## 적용 조건 (when_to_use)

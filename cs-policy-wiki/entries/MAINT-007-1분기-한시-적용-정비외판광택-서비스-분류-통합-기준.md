@@ -5,6 +5,7 @@ category: 정비/영업
 source_file: 정비외판광택-운영-및-응대-기준-1분기-한시-적용.md
 source_section: 1. 서비스 분류 정의 (통합 관리)
 last_verified: 2026-06-25
+source_content_hash: c045f605261faef4
 ---
 
 ## 적용 조건 (when_to_use)

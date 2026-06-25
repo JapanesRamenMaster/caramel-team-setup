@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 일회권-결제-완료-후-예약-미생성-문의-응대-기준.md
 source_section: CS 처리 기준 > 세차권이 미발급된 경우
 last_verified: 2026-06-25
+source_content_hash: 923d0cf75011ba48
 ---
 
 ## 적용 조건 (when_to_use)

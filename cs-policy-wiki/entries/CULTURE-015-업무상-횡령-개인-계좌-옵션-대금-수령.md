@@ -5,6 +5,7 @@ category: 문화/규정
 source_file: 중대-범죄-행위-무관용-원칙.md
 source_section: 1. 형사 처벌 대상 중대 범죄 행위 (사례)
 last_verified: 2026-06-25
+source_content_hash: 2cafb43841aa9f57
 ---
 
 ## 적용 조건 (when_to_use)

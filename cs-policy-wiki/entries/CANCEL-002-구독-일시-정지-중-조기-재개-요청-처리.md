@@ -5,6 +5,7 @@ category: 예약/변경/취소
 source_file: 구독-해지-및-일시-정지-문의-응대-기준.md
 source_section: 세부 정책 > 일시 정지 / 내부 처리 절차 / 고객 안내 문구 > 조기 재개 요청 시
 last_verified: 2026-06-25
+source_content_hash: 12b79c1078a1711d
 ---
 
 ## 적용 조건 (when_to_use)
