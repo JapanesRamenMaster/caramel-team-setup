@@ -11,6 +11,7 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - **테스터 제외** — `deleted_yn=0, test_yn=0, temp_yn=0` (앱 유저 기준). 디테일러는 → §3a
 - **UTC→KST 변환** — DB 전체 UTC 저장. 날짜 집계 전 반드시 변환 → §5a
 - **유령예약 제거** — CONFIRMED 포함 예약 집계 시 `user_service` + `car` 존재 여부 확인 → §2b
+- **차량/타겟(고가차) 분석** — `reservation`엔 car_id 없음. **`reservation_car` 경유**가 정본 → §2d (⚠️ `user_service.applicable_car_id`는 ~60% NULL 함정). 타겟 판별 = `car_model_target.is_target` → §2d
 
 ---
 
@@ -89,7 +90,7 @@ JOIN (SELECT reservation_id, MAX(car_id) car_id FROM reservation_car GROUP BY re
 JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 ```
 
-대안: `checkup.car_id`(WASHED만), `subscription.represent_car_id`. `user_service.applicable_car_id`는 15%만 채워져 부적합.
+대안: `checkup.car_id`(WASHED만), `subscription.represent_car_id`(구독세차 7.5%만). `user_service.applicable_car_id`는 ~60%가 NULL이라 부적합(직관적이라 빠지기 쉬운 함정 — reservation_car는 100% 커버). 검증 2026-06-26.
 
 **차량 브랜드 필터 — `car.brand`는 레거시 nullable**
 - `car.brand`는 레거시 VARCHAR 컬럼으로 NULL인 차량이 존재. `brand IN ('포르쉐','벤츠',...)` 단독으로 쓰면 `brand_id`만 세팅된 차량이 누락됨.
@@ -483,6 +484,8 @@ BEFORE/AFTER 섹션 종류:
 **주행거리**
 - `car.mileage` = 가장 최근 주행거리 스냅샷 (단일 조회용)
 - `car_mileage` 테이블 = 이력 레코드(`car_id`, `mileage`, `record_date`, `type`) (시계열 비교용)
+- ⚠️ **커버리지 함정**: `car.mileage` 단독은 전체 차량 ~39%(타겟차 ~36%)만 채워짐 — 이것만 쓰면 모수 절반 누락. 차량별 "현재 주행거리"는 3단 fallback으로 복구:
+  `COALESCE(NULLIF(car.mileage,0), 최신 checkup.mileage, 최신 car_mileage.mileage)` — checkup=`ORDER BY checkup_datetime DESC LIMIT 1`(방문 실측), car_mileage=`ORDER BY record_date DESC LIMIT 1`. fallback 포함 시 타겟차 커버리지 ~36%→~51%.
 
 **세차 횟수 — 고객 기준 vs 차량 기준**
 - **고객 총 세차** (기본 해석): `COUNT(*) FROM reservation r2 WHERE r2.user_id = r.user_id AND r2.status IN ('WASHED','REPORT_SENT') AND r2.deleted_yn = 0`
@@ -501,6 +504,15 @@ BEFORE/AFTER 섹션 종류:
   3. `cart_item` → `cart` → `payment` → `payment.metadata` JSON_TABLE로 실결제 항목 추출
   4. 포인트 차감: 비례 배분 (`item_price / total_price * point_amount`)
   5. 최종: `sale_price = base_price - point_alloc`
+
+### 6g. CRM 메시지 발송 로그 (`message`)
+
+CRM·트랜잭션 메시지 발송 기록 테이블.
+
+- **컬럼 의미**: 수신자=`customer_id`(→`app_user.id`, ⚠️ `user_id` 아님), 발송시각=`created_at`(UTC), 채널=`lms_type`(`ALIMTALK`/`PUSH`/`MMS`/`SMS`/`LMS`), 캠페인 식별=`type`(varchar 200, 예 `reservationGuide002`·`firstWash_expire`), 발송상태=`status`(기본 `REQUESTED`).
+- ⚠️ **`sent_yn` 함정**: **ALIMTALK은 발송돼도 `sent_yn=0`·`status='REQUESTED'` 고정**(PUSH만 `sent_yn=1`). `sent_yn=1`로 필터하면 알림톡이 통째 누락된다. **행 존재 = 발송요청**으로 집계(도달 확정 아님 — BizM 도달 콜백 미반영).
+- 채널은 `type`별로 대체로 고정(윈백·구독갱신·자동예약=ALIMTALK, 쿠폰만료는 알림톡/푸시가 별도 `type`).
+- **CRM 7일 예약전환 측정**: received(테스터 제외 live_users §5b) → 발송 후 7일 내 `reservation` 생성(`r.user_id = m.customer_id`, `r.created_at` 기준, `r.deleted_yn=0`. raw·비인과). `(customer_id, type)`별 첫 발송 dedup. 상세·재현쿼리 = caramel-api `docs/superpowers/specs/2026-06-30-crm-kill-keep-map.md` §2/§6.
 
 ---
 
@@ -663,47 +675,3 @@ LEFT JOIN service s ON s.id = us.service_id
 | paid_at | datetime | 결제 완료일 |
 | name | varchar(250) | 상품명 (구독은 플랜명 포함, `'외 N개'` suffix 주의) |
 | deleted_yn | tinyint(1) | NULL 가능 — `IS NOT TRUE` 패턴 사용 |
-
----
-
-## 8. 박제 쿼리 (그대로 실행 — 탐색·DESCRIBE 금지)
-
-> 아래는 **고정 형태로 반복되는 질문**이다. 질문이 트리거와 맞으면 **스키마 탐색·DESCRIBE 없이 아래 SQL을 그대로 한 번에 실행**하고, 날짜 등 변수만 치환하라. 여러 턴에 걸쳐 탐색하지 마라 — 이미 검증된 쿼리다.
-
-### 8a. 정비 타겟 일일 리스트 (수입차·연식 5년↑ 당일 예약 고객)
-
-**트리거**: "N월 N일 예약 고객 중 … 국산차 제외 / 수입차 / 연식 5년 이상 … 차량명·차량번호·주행거리·세차 시작시간·담당 디테일러·예약 주소지·세차 내용·세차 횟수" 형태의 **일일 리스트** 요청 (정비 담당자가 매일 날짜만 바꿔 요청).
-
-**규칙**:
-- `<DATE>`(2곳)를 요청 날짜(KST, `YYYY-MM-DD`)로만 치환해 그대로 실행.
-- 연식 5년 이상 = `model_year <= 조회연도 - 5` (쿼리가 `<DATE>`에서 자동 계산).
-- 연식(`model_year`) NULL 차량은 결과 맨 뒤 별도 그룹(`분류='연식미상'`)으로 나옴 → "Null 따로 분류" 충족.
-- 세차 횟수 = 그 고객의 누적 세차완료(`WASHED`/`REPORT_SENT`) 횟수.
-- 취소(`CANCELED`)·테스터(`app_user.test_yn=1`)·임시차(`car.temp_yn=1`) 제외 포함됨. 정렬=연식 오래된 순.
-
-```sql
-SELECT
-  CASE WHEN c.model_year IS NULL THEN '연식미상' ELSE '연식확인' END AS 분류,
-  cm.name AS 차량명, c.plate_number AS 차량번호, c.mileage AS 주행거리,
-  DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%Y-%m-%d %H:%i') AS 세차시작,
-  d.name AS 담당디테일러, r.location AS 예약주소지, s.name AS 세차내용,
-  (SELECT COUNT(*) FROM reservation r2
-     WHERE r2.user_id=r.user_id AND r2.status IN ('WASHED','REPORT_SENT') AND r2.deleted_yn=0) AS 세차횟수,
-  c.model_year AS 연식, cb.name AS 브랜드
-FROM reservation r
-JOIN (SELECT reservation_id, MAX(car_id) car_id FROM reservation_car GROUP BY reservation_id) rc ON rc.reservation_id=r.id
-JOIN car c ON c.id=rc.car_id AND c.deleted_yn=0 AND c.temp_yn=0
-JOIN car_brand cb ON cb.id=c.brand_id
-LEFT JOIN car_model cm ON cm.id=c.model_id
-LEFT JOIN detailer d ON d.id=r.detailer_id
-LEFT JOIN user_service us ON us.reservation_id=r.id AND us.deleted_yn=0
-LEFT JOIN service s ON s.id=us.service_id
-JOIN app_user au ON au.id=r.user_id AND au.deleted_yn=0 AND au.test_yn=0
-WHERE DATE(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'))='<DATE>'
-  AND r.deleted_yn=0 AND r.status IN ('CONFIRMED','WASHED','REPORT_SENT')
-  AND cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르노','쉐보레','캠시스','GM','르노삼성','대우','삼성')
-  AND (c.model_year <= YEAR('<DATE>') - 5 OR c.model_year IS NULL)
-ORDER BY (c.model_year IS NULL), c.model_year ASC;
-```
-- 행이 5개 이상이면 자동으로 스프레드시트로 내보내진다(정상). 검증 기준: 2026-06-26 → 41건(연식확인 32 + 연식미상 9).
-
