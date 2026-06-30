@@ -675,3 +675,46 @@ LEFT JOIN service s ON s.id = us.service_id
 | paid_at | datetime | 결제 완료일 |
 | name | varchar(250) | 상품명 (구독은 플랜명 포함, `'외 N개'` suffix 주의) |
 | deleted_yn | tinyint(1) | NULL 가능 — `IS NOT TRUE` 패턴 사용 |
+
+---
+
+## 8. 박제 쿼리 (그대로 실행 — 탐색·DESCRIBE 금지)
+
+> 아래는 **고정 형태로 반복되는 질문**이다. 질문이 트리거와 맞으면 **스키마 탐색·DESCRIBE 없이 아래 SQL을 그대로 한 번에 실행**하고, 날짜 등 변수만 치환하라. 여러 턴에 걸쳐 탐색하지 마라 — 이미 검증된 쿼리다.
+
+### 8a. 정비 타겟 일일 리스트 (수입차·연식 5년↑ 당일 예약 고객)
+
+**트리거**: "N월 N일 예약 고객 중 … 국산차 제외 / 수입차 / 연식 5년 이상 … 차량명·차량번호·주행거리·세차 시작시간·담당 디테일러·예약 주소지·세차 내용·세차 횟수" 형태의 **일일 리스트** 요청 (정비 담당자가 매일 날짜만 바꿔 요청).
+
+**규칙**:
+- `<DATE>`(2곳)를 요청 날짜(KST, `YYYY-MM-DD`)로만 치환해 그대로 실행.
+- 연식 5년 이상 = `model_year <= 조회연도 - 5` (쿼리가 `<DATE>`에서 자동 계산).
+- 연식(`model_year`) NULL 차량은 결과 맨 뒤 별도 그룹(`분류='연식미상'`)으로 나옴 → "Null 따로 분류" 충족.
+- 세차 횟수 = 그 고객의 누적 세차완료(`WASHED`/`REPORT_SENT`) 횟수.
+- 취소(`CANCELED`)·테스터(`app_user.test_yn=1`)·임시차(`car.temp_yn=1`) 제외 포함됨. 정렬=연식 오래된 순.
+
+```sql
+SELECT
+  CASE WHEN c.model_year IS NULL THEN '연식미상' ELSE '연식확인' END AS 분류,
+  cm.name AS 차량명, c.plate_number AS 차량번호, c.mileage AS 주행거리,
+  DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%Y-%m-%d %H:%i') AS 세차시작,
+  d.name AS 담당디테일러, r.location AS 예약주소지, s.name AS 세차내용,
+  (SELECT COUNT(*) FROM reservation r2
+     WHERE r2.user_id=r.user_id AND r2.status IN ('WASHED','REPORT_SENT') AND r2.deleted_yn=0) AS 세차횟수,
+  c.model_year AS 연식, cb.name AS 브랜드
+FROM reservation r
+JOIN (SELECT reservation_id, MAX(car_id) car_id FROM reservation_car GROUP BY reservation_id) rc ON rc.reservation_id=r.id
+JOIN car c ON c.id=rc.car_id AND c.deleted_yn=0 AND c.temp_yn=0
+JOIN car_brand cb ON cb.id=c.brand_id
+LEFT JOIN car_model cm ON cm.id=c.model_id
+LEFT JOIN detailer d ON d.id=r.detailer_id
+LEFT JOIN user_service us ON us.reservation_id=r.id AND us.deleted_yn=0
+LEFT JOIN service s ON s.id=us.service_id
+JOIN app_user au ON au.id=r.user_id AND au.deleted_yn=0 AND au.test_yn=0
+WHERE DATE(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'))='<DATE>'
+  AND r.deleted_yn=0 AND r.status IN ('CONFIRMED','WASHED','REPORT_SENT')
+  AND cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르노','쉐보레','캠시스','GM','르노삼성','대우','삼성')
+  AND (c.model_year <= YEAR('<DATE>') - 5 OR c.model_year IS NULL)
+ORDER BY (c.model_year IS NULL), c.model_year ASC;
+```
+- 행이 5개 이상이면 자동으로 스프레드시트로 내보내진다(정상). 검증 기준: 2026-06-26 → 41건(연식확인 32 + 연식미상 9).
