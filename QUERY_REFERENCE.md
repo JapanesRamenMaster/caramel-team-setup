@@ -363,6 +363,31 @@ first_sub_reservations AS (
 | `airbridge_daily_install` | Airbridge MMP | `event_date`, `install_users` | Apps Script `SyncAirbridgeInstall.gs` (매일 11:00 KST) |
 | `user_attribution` | App SDK (Airbridge attribution) | `user_id`, `source`, `channel`, `campaign` | NestJS app 직접 적재 (가입 시점) |
 
+**⚠️ `user_attribution` fan-out 함정 (2026-07-01 실사례 — 같은 질문에 3연속 다른 오답)**
+- **유저 1명당 여러 row**가 있다 (`source`별: `airbridge_sdk`/`offline`/`deeplink` 등). 예: `thehyundai_seoul_popup` 캠페인 = 978 row인데 **distinct 유저는 318명** (유저당 평균 3행).
+- 따라서 **`payment` 등 다른 테이블에 직접 JOIN 후 SUM/COUNT 하면 row 수만큼 뻥튀기**된다 (attribution 3행 × 결제 5건 = 15배로 카운트). 실사례: 실제 766만원이 3,641만원으로, 유료 OPTION 4만원이 2만원으로 — 매번 틀림.
+- **규칙: attribution은 반드시 `SELECT DISTINCT user_id`로 먼저 접어 `IN (…)` 서브쿼리로만 연결한다. 절대 직접 JOIN해서 집계하지 않는다.**
+
+**박제 쿼리 — 특정 채널·캠페인 유입 고객의 결제 집계 (검증 SQL, 탐색 없이 그대로 실행)**
+```sql
+-- 유형별 결제 집계 (fan-out 없음). :channel/:campaign 만 바꿔 쓴다.
+SELECT p.type,
+       COUNT(DISTINCT p.user_id)                  AS users,
+       COUNT(*)                                   AS payments,
+       SUM(p.amount - IFNULL(p.cancel_amount, 0)) AS net_amount
+FROM payment p
+WHERE p.status IN ('PAID','PARTIAL_CANCELED')
+  AND p.amount > 0            -- amount=0 무료 번들 옵션(휠분진·유막제거 등) 제외
+  AND p.deleted_yn = 0
+  AND p.user_id IN (
+    SELECT DISTINCT user_id FROM user_attribution
+    WHERE channel = :channel AND campaign = :campaign
+  )
+GROUP BY p.type ORDER BY net_amount DESC;
+```
+- 총 결제고객·총액은 위 쿼리에서 `GROUP BY p.type`를 빼고 `COUNT(DISTINCT p.user_id)`, `SUM(...)`.
+- **신규 여부 주의**: attribution은 재유입(deeplink)도 잡으므로, 결제자 중 **캠페인 시작 전 첫 결제자는 기존고객**일 수 있다. 순수 신규 매출은 `AND p.paid_at >= '<캠페인 시작일>'`을 추가로 건다. (실사례: 팝업 결제자 28명 중 2명은 올해 1월·작년 첫결제 기존고객 → 순수 신규 26명 / 750.6만원.)
+
 **총 광고비 집계 (반드시 3개 채널 합산)**
 ```sql
 SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
