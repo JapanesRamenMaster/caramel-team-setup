@@ -499,6 +499,7 @@ BEFORE/AFTER 섹션 종류:
 - 테이블: `coupon_code`(개별 코드), `coupon_campaign`(파트너 캠페인 — **`partner_name`** 필드), `coupon_code_reward`(보상 정의), `coupon_code_usage`(사용 이벤트). **`coupon`/`discount` 테이블은 없다.**
 - ⚠️ 코드명 LIKE 검색 오탐: `code LIKE '%KCC%'`는 랜덤 발급코드(예: `YKCCHAZB`)가 대량 매칭됨. 파트너 프로모션은 정확 매칭으로 특정.
 - 쿠폰 → 발급 세차권 조인: `coupon_code_reward.id` → `user_service.coupon_code_reward_id`
+- ⚠️ **캠페인→예약전환 조회 시 발급경로 2가지 다 확인**: 코드 등록이 `coupon_code_reward` 경유로 세차권을 주는 캠페인도 있지만, 캠페인이 특정 `service`에 직결돼 코드 등록 즉시 그 서비스가 바로 지급되는 캠페인도 있다(예: "자스민 전용 무료 세차권" = `service.id=140` 직결, `coupon_code_reward` 레코드 자체가 0건). `coupon_code_reward` 경로가 0건이라고 "예약 전환 0건"으로 단정하지 말 것 — 캠페인명으로 `service.name`을 먼저 찾아 `user_service.service_id`로도 교차 확인.
 - **전환 퍼널 = 발급≠사용**: ① `coupon_code_usage`(수령) → ② `user_service.reservation_id IS NOT NULL`(예약) → ③ `reservation.status='WASHED'`(완료). 무료 쿠폰은 ①→②에서 대량 이탈.
 - 리텐션/매출은 `user_service.paid_amount`와 `payment`(status='PAID') 양쪽으로 교차검증. 무료세차 당일 결제는 현장 옵션 업셀 — `payment.paid_at > 무료세차 washed_at`로 진짜 재방문만 분리.
 - **쉘 계정 어뷰징**: 무료 쿠폰 코호트엔 `app_user.phone IS NULL` + 랜덤 이름(`name REGEXP '^[A-Za-z0-9]{6,8}$'`) + 예약 0건인 가짜 계정이 섞임. 실사용자 모수는 **`phone IS NOT NULL`** 필터.
