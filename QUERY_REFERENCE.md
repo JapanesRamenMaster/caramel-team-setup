@@ -12,6 +12,7 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - **UTC→KST 변환** — DB 전체 UTC 저장. 날짜 집계 전 반드시 변환 → §5a
 - **유령예약 제거** — CONFIRMED 포함 예약 집계 시 `user_service` + `car` 존재 여부 확인 → §2b
 - **차량/타겟(고가차) 분석** — `reservation`엔 car_id 없음. **`reservation_car` 경유**가 정본 → §2d (⚠️ `user_service.applicable_car_id`는 ~60% NULL 함정). 타겟 판별 = `car_model_target.is_target` → §2d
+- **행 나열 + 합계 함께 제시 시 합계는 SQL로** — 합계·상태별 건수를 답변에서 손으로 세지 말고 `GROUP BY status` 별도 쿼리로 산출해 행 수와 일치하는지 확인 (실사례: 39행 받아놓고 답변에서 35건으로 오기)
 
 ---
 
@@ -58,6 +59,14 @@ reservation
 | 미확정 | `status = 'CREATED'` (제외할 것) |
 
 ⚠️ `NOT IN ('CANCELED')` 사용 금지 — CREATED가 포함되어 데이터 왜곡됨.
+
+⚠️ **`user_service` 경로로 예약을 붙일 때도 status 화이트리스트 필수** — 세차권에 CANCELED 예약이 연결된 채 남는 경우가 실제로 있어(취소 후 반납된 캠페인 세차권 등), status 필터 없는 LEFT JOIN은 취소·미확정 건을 유효 예약처럼 보이게 한다. 표준 패턴:
+```sql
+LEFT JOIN reservation r ON r.id = us.reservation_id
+  AND r.deleted_yn = 0
+  AND r.status IN ('WASHED', 'REPORT_SENT', 'CONFIRMED')
+```
+CONFIRMED가 포함되므로 §2b 유령예약 체크(`car` EXISTS)도 함께 적용.
 
 ### 2b. 유령예약 제거 (CONFIRMED 집계 시 필수)
 
@@ -499,7 +508,8 @@ BEFORE/AFTER 섹션 종류:
 - 테이블: `coupon_code`(개별 코드), `coupon_campaign`(파트너 캠페인 — **`partner_name`** 필드), `coupon_code_reward`(보상 정의), `coupon_code_usage`(사용 이벤트). **`coupon`/`discount` 테이블은 없다.**
 - ⚠️ 코드명 LIKE 검색 오탐: `code LIKE '%KCC%'`는 랜덤 발급코드(예: `YKCCHAZB`)가 대량 매칭됨. 파트너 프로모션은 정확 매칭으로 특정.
 - 쿠폰 → 발급 세차권 조인: `coupon_code_reward.id` → `user_service.coupon_code_reward_id`
-- ⚠️ **캠페인→예약전환 조회 시 발급경로 2가지 다 확인**: 코드 등록이 `coupon_code_reward` 경유로 세차권을 주는 캠페인도 있지만, 캠페인이 특정 `service`에 직결돼 코드 등록 즉시 그 서비스가 바로 지급되는 캠페인도 있다(예: "자스민 전용 무료 세차권" = `service.id=140` 직결, `coupon_code_reward` 레코드 자체가 0건). `coupon_code_reward` 경로가 0건이라고 "예약 전환 0건"으로 단정하지 말 것 — 캠페인명으로 `service.name`을 먼저 찾아 `user_service.service_id`로도 교차 확인.
+- ⚠️ **캠페인→예약전환 조회 시 발급경로 3가지 다 확인**: 캠페인마다 세차권 연결 컬럼이 다르다 — ① `user_service.coupon_code_reward_id`(코드별 보상 경유) ② `user_service.coupon_campaign_reward_id`(캠페인 단위 보상 `coupon_campaign_reward` 경유 — 예: 자스민 캠페인 80 → reward id 86) ③ `service` 직결(코드 등록 즉시 특정 서비스 지급 — 예: "자스민 전용 무료 세차권" = `service.id=140`, `coupon_code_reward` 레코드 자체가 0건). 한 경로가 0건이라고 "예약 전환 0건"으로 단정하지 말 것 — 캠페인명으로 `service.name` 매칭 + `coupon_campaign_reward.campaign_id` 양쪽을 교차 확인.
+- ⚠️ **쿠폰 세차권으로 생성된 예약만 조회할 땐 `user_id` JOIN 금지** — `coupon_code_usage → user_id → reservation.user_id`로 붙이면 그 유저의 쿠폰과 무관한 **전체 예약**이 섞인다. 반드시 `user_service.reservation_id` 경유로 연결 (위 3가지 발급 컬럼 중 캠페인 구조에 맞는 것으로 user_service를 특정한 뒤 reservation_id로 조인).
 - **전환 퍼널 = 발급≠사용**: ① `coupon_code_usage`(수령) → ② `user_service.reservation_id IS NOT NULL`(예약) → ③ `reservation.status='WASHED'`(완료). 무료 쿠폰은 ①→②에서 대량 이탈.
 - 리텐션/매출은 `user_service.paid_amount`와 `payment`(status='PAID') 양쪽으로 교차검증. 무료세차 당일 결제는 현장 옵션 업셀 — `payment.paid_at > 무료세차 washed_at`로 진짜 재방문만 분리.
 - **쉘 계정 어뷰징**: 무료 쿠폰 코호트엔 `app_user.phone IS NULL` + 랜덤 이름(`name REGEXP '^[A-Za-z0-9]{6,8}$'`) + 예약 0건인 가짜 계정이 섞임. 실사용자 모수는 **`phone IS NOT NULL`** 필터.
