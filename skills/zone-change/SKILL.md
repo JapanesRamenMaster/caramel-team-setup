@@ -119,7 +119,7 @@ ORDER BY dws.effective_from, FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FR
 ```
 
 **검증 규칙**:
-- **활성 + 미래 schedule 없음** (결과 0건): "활성 스케줄이 없습니다. 개발팀에 문의하세요." 중단
+- **활성 + 미래 schedule 없음** (결과 0건): 신규/복귀 케이스. zone "변경"이 아니라 **스케줄 신규 생성** — "부록: 신규/복귀 디테일러 스케줄 생성" 절차로 전환 (과거 schedule 이력 조회 → 근무시간 확인 → 확인 게이트 → 생성)
 - **zone_id가 전부 NULL** (legacy): "이 디테일러는 zone 기반이 아닙니다 (service_region_group 사용 중). 개발팀에 zone 전환을 요청하세요." 중단
 - **schedule이 여러 개로 분할되어 있음**: 표시 후 Step 3.5로 진행 (영구 vs 임시 vs 분할 schedule 단위 변경)
 - **여러 zone에 배정** (겸임): 요일별 zone 표시 + AskUserQuestion으로 "어떤 요일의 zone을 변경할까요?" (전체/평일/주말/특정요일) 선택
@@ -356,6 +356,18 @@ ORDER BY FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FRI','SAT','SUN');
 | 검증 실패 | Step 7c | 경고 + 롤백 SQL |
 
 ---
+
+## 부록: 신규/복귀 디테일러 스케줄 생성 (활성 스케줄 0건)
+
+2026-07-03 전승엽 Z12 배정으로 검증된 절차. 이 케이스에 한해 `detailer_work_schedule` INSERT 허용 (그 외엔 여전히 수정 금지).
+
+1. 과거 schedule 이력 조회 (`WHERE detailer_id = ? ORDER BY effective_from`) — 과거 근무시간/존 참고.
+2. 근무시간 결정: 과거 본인 시간 vs 목표 zone 기존 인원 시간이 다르면 AskUserQuestion으로 확인.
+3. 헤더 INSERT — **effective 경계는 KST 자정을 UTC로 저장**: D일부터 노출 = `effective_from '(D-1) 15:00:00'`, 영구 = `effective_to '2099-12-30 23:59:59'`. `type='DEFAULT'`, `slot_id=NULL`, description에 사유.
+4. rule INSERT — 요일별, `start/end_time '1970-01-01 HH:MM:SS'` UTC (10~19 KST = 01:00~10:00), `service_region_group_id=NULL`.
+5. 검증 — 노출 시뮬레이션(`effective_from <= 'D일 00:00:00' <= effective_to` + 요일 + zone), 목표 zone 해당일 명단에 포함 확인, `detailer_holiday` 확인, 최근 정상 row(예: #736)와 렌더 형태 비교.
+
+**⚠️ mysql-query.sh DATETIME 렌더 함정**: SELECT 렌더값(`...Z` ISO)은 저장값−9h. 렌더값 복붙 INSERT 금지 — 반드시 `DATE_FORMAT`으로 읽은 저장 원문 기준으로 쓸 것.
 
 ## 부록: 스케줄 시스템 동작 메모
 

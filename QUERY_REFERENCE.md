@@ -121,6 +121,20 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 - `car_tier`(T1~T7)도 차 크기 기준이라 출고가 대리변수로 못 씀.
 - 뷰 `is_target=1` = 220개 모델(2026-06 기준).
 
+**⚠️ 타겟 "고객" 판별 3패턴 — 패턴에 따라 숫자가 다르다 (세컨카 포함/제외 차이)**
+- **패턴 A (세차 건)**: `reservation_car`→`car`→`car_model_target` — 세차한 그 차가 타겟인지. 타겟 유저가 비타겟 세컨카로 세차하면 제외됨.
+- **패턴 B (유저)** ✅ **타겟 고객 분석 표준**: 유저가 타겟차 1대+ 보유 → 그 유저의 세차·결제 전부 포함 (비타겟 세컨카 세차도 포함).
+  ```sql
+  target_users AS (
+    SELECT DISTINCT c.user_id FROM car c
+    JOIN car_model_target cmt ON cmt.id = c.model_id
+    WHERE c.deleted_yn = 0 AND cmt.is_target = 1
+  )
+  -- 이후 JOIN target_users tu ON tu.user_id = r.user_id
+  ```
+- **패턴 C (첫차)**: 유저의 첫 등록차가 타겟인지 — 신규 등록 코호트 지표에만.
+- 같은 "타겟 비율"이라도 A/B/C 숫자가 다르다 (실측: B 전환 시 고객수 +7%, 침투율 +5%p). **타겟 고객 분석은 B로 통일** (CBR v2 표준). 예외: 침투율 분모=전체 유입(타겟 필터 없음), 타겟차 신규 등록수=패턴 C 유지.
+
 ### 2e. 주소/좌표 COALESCE 패턴
 
 `reservation.latitude/longitude`는 @deprecated (Prisma 스키마 2026-04-28~). 신규 예약은 `user_address`에만 좌표가 있을 수 있음. Zone 매핑·좌표 쿼리는 반드시 COALESCE:
@@ -244,6 +258,15 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
 
 예외: `paused_at`, `ended_at`은 코드에서 KST(`Asia/Seoul`)로 할당 → UTC +9H 변환 불필요.
 
+**⚠️ mysql-query.sh DATETIME 렌더링 함정 (쓰기 작업 시 치명적)**
+- DATETIME 컬럼을 그냥 SELECT하면 `...Z` ISO로 보이지만 **실제 저장값이 아니라 저장값−9h** (드라이버가 naive 값을 KST 로컬로 해석해 UTC ISO로 직렬화).
+- 저장 원문이 필요하면 `DATE_FORMAT(col,'%Y-%m-%d %H:%i:%s')`로 문자열화해서 읽을 것.
+- INSERT/UPDATE의 인라인 리터럴은 **verbatim 저장**됨 → SELECT에서 본 `Z` ISO 값을 그대로 복붙해 넣으면 9시간 어긋난다. 반드시 DATE_FORMAT으로 읽은 원문 기준으로 쓸 것.
+
+**⚠️ DATE 컬럼(시각 없음)도 렌더링 함정 — 하루 밀림**
+- DATE 컬럼도 `...T15:00:00.000Z` ISO로 렌더됨: **렌더 X일T15:00Z = 저장 X+1일** (naive date를 KST 자정으로 해석해 UTC 직렬화).
+- 날짜별 결과를 눈으로 해석할 때 하루 밀려 읽기 쉬움 → `DATE_FORMAT(col,'%Y-%m-%d')`로 뽑을 것. (실사례: `forecast_log.forecast_date`)
+
 ### 5b. 테스터/테스트 계정 제외
 
 ```sql
@@ -273,6 +296,13 @@ AND r.id NOT IN (
 - **실사용 구독자(일시정지 제외)**: `status='ACTIVE' AND paused_at IS NULL`
 - `status='ACTIVE' AND paused_at IS NOT NULL` = 일시정지 상태 (세차 불가, 구독료 정지)
 
+**⚠️ stopped_at·churn 판정 함정**
+- `stopped_at` = 해지 시점 (churn 판정 컬럼). **STOPPED 4,500건+도 `deleted_yn=0`** → deleted_yn만으로 활성 판단하면 해지 구독이 오염된다. 활성 = `status='ACTIVE' AND deleted_yn=0`.
+- status 실값: `STOPPED`/`ACTIVE`/`CREATED`/`ENDED`/NULL(+오타 `STOPPPED` 소량). **`PAUSED` status는 없다** — 일시정지는 `paused_at`으로만 판별.
+- **churn 계산**: 분모 = 월초 ACTIVE (`started_at < 월초 AND (stopped_at IS NULL OR stopped_at >= 월초)`), 분자 = 월내 `stopped_at` 전이, user DISTINCT, paused 제외. ⚠️ **분자에도 `started_at < 월초` 코호트 조건을 걸 것** — 안 걸면 월중 가입→같은 달 해지 유저가 분모 없이 분자에만 새서 churn이 과대된다 (실측: 주간 기준 10~12% 상대 과대).
+- ⚠️ 과거 시점 활성 구독 수 스냅샷에 `status='ACTIVE'`(현재 상태) 필터를 쓰면 이후 해지된 구독이 과거에서도 빠져 역사 시계열이 통째로 과소된다 — 과거 스냅샷은 `started_at`/`stopped_at` 경계로만 판정.
+- 데이터 품질: STOPPED인데 stopped_at NULL ~90건, ENDED는 stopped_at 전부 NULL → 경계식 분모에 영구 잔류 주의.
+
 **1회권 vs 구독 구분:**
 - **1회권**: `user_service.subscription_id IS NULL`
 - **구독 세차**: `user_service.subscription_id IS NOT NULL`
@@ -297,6 +327,8 @@ first_sub_reservations AS (
 
 **예약 → 날씨 조인 (forecast_log dedup 필수)**
 - 같은 zone+date에 row가 여러 개 쌓임 → `ROW_NUMBER() OVER (PARTITION BY zone_id, forecast_date ORDER BY forecasted_at DESC)` 로 dedup 필수.
+- ⚠️ **`source` 필터도 필수** — 4종 혼재: 예보=`KMA_PUBLIC_API`(probability 항상 있음)·`OPEN_METEO`, 실황=`KMA_PUBLIC_API_OBSERVED`·`OPEN_METEO_ARCHIVE`(probability NULL, amount_mm만). source 없이 dedup하면 예보/실황이 뒤섞임. 앱 우천 로직 기준 = 예보 `KMA_PUBLIC_API` + 실황 `KMA_PUBLIC_API_OBSERVED`.
+- 참고: 앱의 "비예보 표시" 판정 = `RAIN` + 확률≥50%(3일 내)/60%(이후) + 강수량≥5mm (`rain-forecast-display.policy.ts`). 리터치 신청 가능 날짜에서 비예보일·주말 제외도 이 기준.
 - ⚠️ `zone_rain_log` 테이블은 드롭됨 — `forecast_log`만 사용.
 - 경로: `reservation` → zone(polygon join, COALESCE 패턴 §2e) → `forecast_log`(zone_id + forecast_date)
 
@@ -341,6 +373,16 @@ first_sub_reservations AS (
 **슬롯 가용 판단**
 - X시 슬롯 공급 가능 = rule의 `start_time(KST) ≤ X시` AND `end_time(KST) ≥ X+1시`
 - **`effective_from~to` 범위만 체크하면 과대 카운트** — 반드시 해당 요일의 rule 존재 여부를 함께 확인
+
+**effective 경계 저장 컨벤션 (스케줄 생성/수정 시)**
+- KST 자정 경계를 UTC로 저장: **D일부터 유효 = effective_from `'(D-1) 15:00:00'`**, 영구 = effective_to `'2099-12-30 23:59:59'`.
+- 코드 lookup은 `dayjs(date).startOf('day')`(UTC 자정)와 `effective_from <= date <= effective_to` 비교 + 해당 요일 rule 매칭.
+- 노출 시뮬레이션: `effective_from <= 'D일 00:00:00' AND effective_to >= 'D일 00:00:00'` + `day_of_week` + `zone_id` 조건으로 SQL 재현 가능.
+
+**신규/복귀 디테일러 스케줄 생성 (활성 스케줄 0건인 경우)**
+- rule만으로는 안 되고 `detailer_work_schedule` 헤더부터 INSERT 필요.
+- 최근 운영 컨벤션: `slot_id = NULL`, `type = 'DEFAULT'`, description에 사유 메모.
+- rule의 start/end_time은 `'1970-01-01 HH:MM:SS'` UTC (예: 10~19시 KST = `01:00:00`~`10:00:00`), `service_region_group_id = NULL`.
 - Fill Rate = `실제 예약 디테일러 수 / 스케줄 기반 공급 가능 디테일러 수`
 
 **detailer_holiday 처리**
@@ -514,6 +556,8 @@ BEFORE/AFTER 섹션 종류:
 - 리텐션/매출은 `user_service.paid_amount`와 `payment`(status='PAID') 양쪽으로 교차검증. 무료세차 당일 결제는 현장 옵션 업셀 — `payment.paid_at > 무료세차 washed_at`로 진짜 재방문만 분리.
 - **쉘 계정 어뷰징**: 무료 쿠폰 코호트엔 `app_user.phone IS NULL` + 랜덤 이름(`name REGEXP '^[A-Za-z0-9]{6,8}$'`) + 예약 0건인 가짜 계정이 섞임. 실사용자 모수는 **`phone IS NOT NULL`** 필터.
   - 어뷰징 점검: `user_address.address`+`detail_address`로 세대 묶기, 같은 주소 생성 버스트 탐지, `app_user.dealer_id`/`created_by`로 딜러 경유 확인, `app_user.phone`과 `detailer.phone` 대조(디테일러 셀프-어뷰징).
+- ⚠️ **프로모션 "종료" 판단 함정**: 로그인 게이트(`/careplus/auth/promotion/*`)가 막혔다고 쿠폰까지 막힌 게 아니다. `POST /careplus/coupon/apply`는 프로모션 상태와 무관한 앱 공용 엔드포인트로, 검증은 `coupon_code.expired_at`/`max_usage_count`만 본다. "프로모션 막혔나요?" 질문엔 로그인 엔드포인트뿐 아니라 **해당 쿠폰의 `expired_at`도 같이 확인** 필수 — 안 그러면 로그인 게이트만 막고 코드 자체는 방치돼 계속 재적용 가능한 뒷문이 남는다(KCC·토스 사례 반복).
+- ⚠️ **`coupon_code.name` LIKE 검색 시 코드 모델 착각 주의**: 같은 `name`으로 캠페인당 **1개 공유코드**(KCC `voucher_kcc`)인 경우와 **유저당 1개씩 개별 발급**(토스 "토스 유저 쿠폰", 5만 row)인 경우가 섞여 있다. `SELECT * WHERE name LIKE '%키워드%'`로 순진하게 조회하면 후자는 row가 수만 개 쏟아진다 — 먼저 `COUNT(*) GROUP BY name`으로 코드 개수 모델부터 확인. 미사용 코드 수 계산 시 `coupon_code_usage`는 `COUNT(*)`(usage row)와 `COUNT(DISTINCT coupon_code_id)`(실사용 고유 코드 수)가 다르므로 반드시 distinct 기준으로 뺄 것.
 
 ### 6f. 분석 코호트
 
@@ -655,10 +699,12 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 |------|------|------|
 | id | int | PK |
 | user_id | int | FK → app_user.id |
-| status | varchar(25) | `ACTIVE` / `STOPPED` / `PAUSED` |
+| status | varchar(25) | `ACTIVE`/`STOPPED`/`CREATED`/`ENDED`/NULL (오타 `STOPPPED` 소량). ⚠️`PAUSED` 없음 — 일시정지는 paused_at |
 | represent_car_id | int | FK → car.id (구독 대표 차량) |
 | product_id | int | FK → product.id |
 | started_at | datetime | 구독 시작일 |
+| stopped_at | datetime | 해지 시점 (churn 판정 → §5d). STOPPED인데 NULL ~90건 |
+| paused_at | datetime | 일시정지 시점 (ACTIVE + NOT NULL = 일시정지) |
 | ended_at | datetime | 구독 종료일 |
 | deleted_yn | tinyint | 0=정상 |
 | period | int | 주기 (숫자, period_unit과 조합) |

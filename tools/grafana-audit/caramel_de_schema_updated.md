@@ -1777,12 +1777,12 @@ LEFT JOIN zone z ON ST_Contains(
 | weather_condition | VarChar(50) | YES | NULL | `SUNNY` / `RAIN` / `SNOW` |
 | precipitation_probability | Int | YES | NULL | 강수 확률 0–100 |
 | precipitation_amount_mm | Decimal(8,2) | YES | NULL | 강수량 (mm) |
-| source | VarChar(50) | NO | - | 현재 `KMA_PUBLIC_API` |
+| source | VarChar(50) | NO | - | 4종 혼재 — 예보: `KMA_PUBLIC_API`(주 사용, probability 항상 있음)·`OPEN_METEO` / 실황: `KMA_PUBLIC_API_OBSERVED`·`OPEN_METEO_ARCHIVE`(probability NULL, amount_mm만) |
 | raw_payload | JSON | YES | NULL | 원본 API 응답 |
 
 **인덱스:** `(zone_id, forecast_date, forecasted_at DESC)`, `(forecast_date)`, `(source)`
 
-**⚠️ 같은 zone+date에 row가 여러 개 쌓인다** (수집할 때마다 append). 분석 시 반드시 `forecasted_at DESC` 기준 최신 1건으로 dedup:
+**⚠️ 같은 zone+date에 row가 여러 개 쌓인다** (수집할 때마다 append). 분석 시 반드시 `source` 필터 + `forecasted_at DESC` 기준 최신 1건으로 dedup (source 없이 dedup하면 예보/실황이 뒤섞임):
 
 ```sql
 SELECT zone_id, forecast_date, weather_condition, precipitation_amount_mm
@@ -1791,6 +1791,7 @@ FROM (
            ROW_NUMBER() OVER (PARTITION BY zone_id, forecast_date ORDER BY forecasted_at DESC) AS rn
     FROM forecast_log
     WHERE forecast_date BETWEEN '2026-06-01' AND '2026-06-30'
+      AND source = 'KMA_PUBLIC_API'  -- 예보 기준. 실황이면 'KMA_PUBLIC_API_OBSERVED'
 ) t
 WHERE rn = 1;
 ```
