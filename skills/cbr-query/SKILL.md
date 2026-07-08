@@ -169,7 +169,8 @@ mysql-query.sh "생성된SQL"
    - 팀 drill-down: 해당 팀 컬러로 통일 (palette-classic 쓰지 말 것)
 6. **y축 min=0 설정**, 하드코딩된 max 사용 금지 (성장 시 클리핑됨)
 7. **`grafana_save.save(dash_obj, message=...)`로 저장.** 헬퍼가 folderUid 자동 주입 + 사후 검증까지 함. 직접 `POST /api/dashboards/db` 절대 금지.
-8. **마무리**: `python3 grafana-audit/grafana_save.py verify` 실행 — 모든 CBR 대시보드가 팀 폴더에 있는지 최종 확인. 그 후 사용자에게 보고.
+8. **미적 게이트 (barchart 추가·수정 시 필수)**: `python3 grafana-audit/apply_barchart_style.py apply <uid>` 실행 — barWidth 0.97 통일 + axisSoftMax headroom(값 라벨 클리핑 방지)을 정규화 (§7 "미적 게이트" 참고). 그 후 렌더로 값·간격 눈으로 확인(`mcp__grafana__get_panel_image`).
+9. **마무리**: `python3 grafana-audit/grafana_save.py verify` 실행 — 모든 CBR 대시보드가 팀 폴더에 있는지 최종 확인. 그 후 사용자에게 보고.
 
 **Segment breakdown을 추가했다면**: drill-down 대시보드에 함께 추가 (전사 CBR엔 너무 세밀)
 
@@ -494,6 +495,8 @@ active_detailers AS (
 
 **의도된 multi-series 예외**: 드물게 multi-series가 정당화되는 경우(예: segment 비교 line chart, cohort retention 30/60/90일 한 차트)에만 패널 description 끝에 `[multi-series ok]` 마커를 추가. 마커가 있으면 validate_one_metric.py가 skip. 마커 없이 multi-metric은 무조건 위반으로 처리됨. 마커는 user 또는 사용자 명시 컨펌 후에만 추가.
 
+**⚠️ long-format(time, 라벨, 값) 멀티시리즈는 partitionByValues transform 필수**: SQL이 `(time, cohort/plan[문자열], value[숫자])` long-format을 반환해도 Grafana timeseries/barchart는 **자동으로 시리즈를 안 갈라준다**(단일 스파이크로 뭉쳐 렌더). 반드시 panel `transformations`에 `{"id":"partitionByValues","options":{"fields":["<라벨컬럼>"],"keepFields":false,"naming":{"asLabels":false}}}`를 넣어야 라벨값별 시리즈로 분리된다. (2026-07-07: drill-down #78 "구독 코호트 잔존율 햄버거"가 이 transform 없이 단일시리즈로 조용히 깨져 있었음 — 원본 복제 시 주의.) 범례 접미사(" active_subscribers" 등)를 renameByRegex로 지우려 해도 프레임명+필드명 합성 표시라 안 먹으니, 신경 쓰지 말거나 값 컬럼 alias를 라벨로 흡수하는 식으로 처리.
+
 ### 패널 스타일 규칙 (기존 패널 복제 필수)
 
 새 패널 추가 시 **반드시 기존 패널의 차트 타입, 레이아웃, 스타일을 그대로 복제**할 것.
@@ -504,8 +507,12 @@ active_detailers AS (
 | gridPos | w=8, h=14, x=0 | w=16, h=14, x=8 |
 | color | fixedColor="green", mode="fixed" | 동일 |
 | fillOpacity | 80 | 0 |
+| **barWidth** | **0.97** | - |
+| **groupWidth** | **0.7** | - |
+| **orientation** | **"vertical"** | - |
 | lineInterpolation | - | linear |
 | showValue | "always" | showValues=true |
+| **axisSoftMax** | **필수 (아래 미적 게이트)** | - |
 | legend | displayMode="list" | displayMode="hidden" |
 | unit | None (기본값) | None |
 
@@ -513,6 +520,25 @@ active_detailers AS (
 - datasource uid: `fe9zb9udylatcd`, dataset: `caramel-prod`
 - description 필드에 지표 설명 포함
 - 복제 원본: Panel 86 (주간 barchart), Panel 87 (월간 timeseries)
+- **⚠️ barWidth는 반드시 0.97로 통일** — 복제 원본마다 0.7/0.89/0.97 혼재해 막대 간격이 패널마다 달라 보이는 사고가 있었음 (2026-07-07 ap4j74 audit). "0.97 아닌 barchart 발견 시 무조건 교정."
+
+### 미적 게이트 — barchart 값 라벨 클리핑 방지 (axisSoftMax headroom) — 필수
+
+**증상**: `showValue: "always"`인데도 막대 위 값이 하나도 안 보임.
+**원인**: barchart는 최고 막대가 y축 상단에 닿으면(=데이터 max ≈ 축 auto-max) 최고 막대의 값 라벨이 잘려서 **전 막대의 라벨을 통째로 숨긴다**. auto 축은 데이터 크기·nice-number 반올림에 따라 여유공간이 생기기도(우연히 보임) 안 생기기도(안 보임) 해서 패널마다 들쭉날쭉하다. (2026-07-07 ap4j74: v2 신규 패널 대부분 값 안 보임 → 이 원인으로 확정.)
+**해결**: 각 barchart의 실데이터 max를 구해 `fieldConfig.defaults.custom.axisSoftMax = nice_ceil(max × 1.25)` 로 상단 여유공간을 강제한다. 그러면 값이 항상 보인다.
+**자동화**: `python3 grafana-audit/apply_barchart_style.py apply <uid>` (idempotent).
+- barWidth 0.97 / groupWidth 0.7 / orientation vertical / showValue always / axis 표준 custom + axisSoftMax headroom 을 한 번에 정규화.
+- 각 패널 SQL을 실행해 max 계산 (stacked=행별 합, 그 외=행별 최대셀). DECIMAL은 문자열로 오므로 float 파싱함. rawSql이 `--` 주석으로 시작하면 앞에 공백을 붙여 실행(node `--` 옵션 오인 회피).
+- `check <uid>` 는 저장 없이 위반만 리포트.
+- ⚠️ axisSoftMax는 실데이터 스냅샷 기준이라 지표가 25%+ 성장하면 다시 클리핑될 수 있음 → 주기적으로 재실행(또는 신규 패널 추가 시)해 bump.
+- **신규 6w/12m barchart 패널을 추가·수정한 뒤 반드시 이 스크립트를 돌린다.**
+
+### 미적 게이트 — 6w 하한 윈도우 누락 체크
+
+`apply_cbr_cutoff.py`는 **상한**(진행중 주 제외)만 넣는다. **하한**(`>= INTERVAL 6 WEEK`)이 빠지면 전체 히스토리(~150개 막대)가 다 찍혀 x축이 뭉개지고 값이 안 보인다. (2026-07-07 ap4j74 #307 상품믹스 주간이 이 버그였음.)
+- 6w barchart는 `WHERE time >= <이번주 월요일 − 6 WEEK> AND time < <이번주 월요일>` 두 경계가 모두 있어야 정확히 6행.
+- 렌더 결과가 6행(주간)/12~13행(월간)이 아니면 윈도우 경계를 확인.
 
 ### 주간 집계 — 6w 쿼리 전용 (time = 그 주 월요일)
 ```sql

@@ -101,6 +101,10 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 
 대안: `checkup.car_id`(WASHED만), `subscription.represent_car_id`(구독세차 7.5%만). `user_service.applicable_car_id`는 ~60%가 NULL이라 부적합(직관적이라 빠지기 쉬운 함정 — reservation_car는 100% 커버). 검증 2026-06-26.
 
+**⚠️ "다차(2대+) 유저" 정의 — 등록 기준 금지**
+- 등록 차량(`car` 활성 2대+) 5,913명 vs 실제 2대+ 세차(WASHED) 1,484명 — **등록 기준은 ~4배 과대** (검증 2026-06-26).
+- 다차 세그먼트/리텐션 분석의 모수 = `reservation_car` 경유 `COUNT(DISTINCT car_id) >= 2` (WASHED 기준).
+
 **차량 브랜드 필터 — `car.brand`는 레거시 nullable**
 - `car.brand`는 레거시 VARCHAR 컬럼으로 NULL인 차량이 존재. `brand IN ('포르쉐','벤츠',...)` 단독으로 쓰면 `brand_id`만 세팅된 차량이 누락됨.
 - **올바른 패턴:**
@@ -301,7 +305,15 @@ AND r.id NOT IN (
 - status 실값: `STOPPED`/`ACTIVE`/`CREATED`/`ENDED`/NULL(+오타 `STOPPPED` 소량). **`PAUSED` status는 없다** — 일시정지는 `paused_at`으로만 판별.
 - **churn 계산**: 분모 = 월초 ACTIVE (`started_at < 월초 AND (stopped_at IS NULL OR stopped_at >= 월초)`), 분자 = 월내 `stopped_at` 전이, user DISTINCT, paused 제외. ⚠️ **분자에도 `started_at < 월초` 코호트 조건을 걸 것** — 안 걸면 월중 가입→같은 달 해지 유저가 분모 없이 분자에만 새서 churn이 과대된다 (실측: 주간 기준 10~12% 상대 과대).
 - ⚠️ 과거 시점 활성 구독 수 스냅샷에 `status='ACTIVE'`(현재 상태) 필터를 쓰면 이후 해지된 구독이 과거에서도 빠져 역사 시계열이 통째로 과소된다 — 과거 스냅샷은 `started_at`/`stopped_at` 경계로만 판정.
-- 데이터 품질: STOPPED인데 stopped_at NULL ~90건, ENDED는 stopped_at 전부 NULL → 경계식 분모에 영구 잔류 주의.
+- 데이터 품질: STOPPED인데 stopped_at NULL ~90건, ENDED는 stopped_at 전부 NULL → 경계식 분모에 영구 잔류. 해결 = 종료시점에 `ended_at` fallback(아래).
+- ⚠️⚠️ **`ended_at`은 "종료시점"이 아니다 — churn/활성 판정에 `COALESCE(stopped_at, ended_at)`를 전 행에 쓰지 말 것.** `subscription.ended_at`은 **ACTIVE 구독에선 현재 결제주기 종료일(=다음 갱신 예정일, 미래)**이다(2026-07 기준 ACTIVE 1861건 중 1609건 미래). 전 행에 coalesce하면 아직 구독 중인 유저의 갱신일이 "해지일"로 둔갑 → 현재월 churn이 폭등한다(실측 4.75%→83%). **올바른 종료시점**:
+  ```sql
+  CASE WHEN status IN ('STOPPED','STOPPPED','ENDED')
+       THEN COALESCE(stopped_at, ended_at)  -- 종료구독만 ended_at fallback(stopped_at NULL ~120건 구제)
+       ELSE stopped_at END                   -- ACTIVE 등은 ended_at 무시(NULL=미해지)
+  ```
+  churn 분모·분자, 과거 활성 스냅샷의 "경계 종료시점" 모두 이 식을 쓸 것. `stopped_at`=실제 해지일, `ended_at`=다음 결제 예정일 — 섞으면 갱신을 해지로 오해.
+- **⚠️ 구독-차량 1:1 바인딩은 2026-04-01 도입** (`represent_car_id` 설정률 ~95%→100% 시점). 그 전엔 구독 세차의 ~39%가 represent_car가 아닌 차에 발생 → **2026-04 이전 기간에 `represent_car_id`로 "구독으로 세차한 차"를 판정하면 왜곡**. 이전 기간은 reservation_car로 실세차 차량을 직접 볼 것 (검증 2026-07-07).
 
 **1회권 vs 구독 구분:**
 - **1회권**: `user_service.subscription_id IS NULL`
@@ -705,7 +717,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | started_at | datetime | 구독 시작일 |
 | stopped_at | datetime | 해지 시점 (churn 판정 → §5d). STOPPED인데 NULL ~90건 |
 | paused_at | datetime | 일시정지 시점 (ACTIVE + NOT NULL = 일시정지) |
-| ended_at | datetime | 구독 종료일 |
+| ended_at | datetime | ⚠️해지일 아님. ACTIVE에선 현재 결제주기 종료일(=다음 갱신 예정일, 미래). 종료판정은 §5d CASE식으로 |
 | deleted_yn | tinyint | 0=정상 |
 | period | int | 주기 (숫자, period_unit과 조합) |
 | period_unit | varchar(15) | `'week'` / `'month'` |
