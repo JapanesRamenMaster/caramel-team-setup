@@ -561,9 +561,18 @@ END AS car_type
 | 컬럼 | 타입 | nullable | 기본값 | 설명 |
 |------|------|-----|--------|------|
 | id | Int | NO | autoincrement | PK |
-| medium | VarChar(100) | NO | - | 결제 수단 (CASH, POINT) |
+| medium | VarChar(100) | NO | - | 결제 수단 (CASH, POINT 두 종류만) |
 | amount | Int | NO | - | 금액 |
 | payment_id | Int | NO | - | FK → payment |
+
+**⚠️ payment_medium은 2025-09부터만 존재 (2026-07-09 확인)** — 그 이전 결제엔 CASH/POINT 행이 아예 없다. 따라서 `payment_medium`으로 현금/포인트를 분해하는 쿼리는 **2025-09 이전 히스토리가 통째로 0**이 되는 함정(0에서 솟는 가짜 램프). 전 기간 견고한 포인트 차감:
+```sql
+point_used = COALESCE(
+  (SELECT SUM(pm.amount) FROM payment_medium pm WHERE pm.payment_id=p.id AND pm.medium='POINT'),
+  CAST(JSON_UNQUOTE(JSON_EXTRACT(p.metadata,'$.point')) AS SIGNED), 0)  -- payment_medium 없으면 metadata fallback
+```
+- `payment.amount` = **CASH + POINT 합**(포인트 포함, 쿠폰 차감 후). 2025-09 이후엔 `SUM(payment_medium.amount) == payment.amount`.
+- **현금유입/GMV** = `amount − point_used − (부분취소면 cancel_amount)`. metadata.$.point는 전 기간 존재.
 
 ---
 
