@@ -262,6 +262,10 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
 
 예외: `paused_at`, `ended_at`은 코드에서 KST(`Asia/Seoul`)로 할당 → UTC +9H 변환 불필요.
 
+**⚠️ 예외 2: `reservation.created_at`/`modified_at`은 KST 저장 (2026-07-12 실측)**
+- 같은 행에서 `reservation_datetime`은 UTC인데 `created_at`/`modified_at`은 **KST 벽시계** (MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST, 앱이 직접 쓰는 datetime=UTC — 컬럼마다 다름). CONVERT_TZ 하면 9h 틀어짐. `DATE_FORMAT`으로 뽑은 문자열이 곧 KST.
+- **디테일러 재배정 역추적 시그니처**: 재배정은 이력 테이블이 없다(`reservation_change_log`에 안 남음). `modified_at`이 **`17:00:00` 정각 = 셔플 크론(매일 17시 KST)이 detailer_id 변경**한 것, 정각 아닌 17시대(예 17:51) = 사람이 어드민에서 재배정했을 개연성. 사실상 유일한 역추적 수단 (2026-07-13 임세혁 셔플 진단 실사례).
+
 **⚠️ mysql-query.sh DATETIME 렌더링 함정 (쓰기 작업 시 치명적)**
 - DATETIME 컬럼을 그냥 SELECT하면 `...Z` ISO로 보이지만 **실제 저장값이 아니라 저장값−9h** (드라이버가 naive 값을 KST 로컬로 해석해 UTC ISO로 직렬화).
 - 저장 원문이 필요하면 `DATE_FORMAT(col,'%Y-%m-%d %H:%i:%s')`로 문자열화해서 읽을 것.
@@ -397,11 +401,18 @@ first_sub_reservations AS (
 - rule의 start/end_time은 `'1970-01-01 HH:MM:SS'` UTC (예: 10~19시 KST = `01:00:00`~`10:00:00`), `service_region_group_id = NULL`.
 - Fill Rate = `실제 예약 디테일러 수 / 스케줄 기반 공급 가능 디테일러 수`
 
+**detailer_work_schedule.type — DEFAULT만 있는 게 아니다 (2026-07-13)**
+- `type` 값: `DEFAULT`(일반 존 배정) / `BANYAN_TREE`(반얀트리 주소 전용) / `HEY_DEALER`(외부 사업 이탈 마커, lookup에서 제외).
+- 코드 lookup이 type별로 분리 조회 → **반얀트리 상주 배정은 zone rule이 아니라 `type='BANYAN_TREE'`** + `slot_id`(→`detailer_slot` 슬롯 템플릿: 3=반얀 1팀 07:30~14:30, 4=2팀, 5=3팀) + rule `service_region_group_id=2`(서울 중구)·`zone_id=NULL`. zone 테이블만 뒤지면 못 찾는다.
+- 같은 slot_id를 가진 디테일러 N명 = 슬롯당 캐파 N배.
+- **기간 파견 패턴 = 스케줄 3토막**: ①기존 스케줄 `effective_to` 단축 ②파견 스케줄(기간 한정) INSERT ③복귀 스케줄(파견 종료 익일~영구) INSERT. ③을 빼먹으면 파견 종료 후 배정 공백.
+
 **detailer_holiday 처리**
 - 단기(≤7일) full-day (`from ≤ 당일 00:00` AND `to ≥ 익일 00:00`) → 실제 off
-- 장기(>7일) → 무시 (파견/퇴사 등 운영 메모)
+- 장기(>7일) → capacity 집계에선 무시 (파견/퇴사 등 운영 메모)
 - 부분 시간 → 겹치는 슬롯만 차감
 - `v_detailer_holiday_daily` 뷰 한계 있음 — capacity 쿼리에서는 `detailer_holiday` 직접 조회 권장
+- ⚠️ **"왜 슬롯에 안 뜨나" 진단에선 반대 — 휴무는 길이 무관 하드 차단** (2026-07-13). 플래그(booking_yn 등)·스케줄·rule이 다 정상이어도 해당 날짜에 holiday row 있으면 노출 0. 운영이 파견/별동대를 **매일 full-day 휴무 bulk INSERT**로 마킹하는 패턴이 있으니(같은 created_at·memo 예 "정비별동대") 미노출 진단 시 `memo` 확인 필수.
 
 **주말 데이터 주의**
 - 주말 디테일러 2~3명 → fill rate 스윙이 큼

@@ -78,7 +78,7 @@ Step 3에서 type을 항상 함께 조회해서 사용자에게 표시할 것.
 ### Step 2: 디테일러 검증
 
 ```sql
-SELECT d.id, d.name, d.phone, d.retired_yn,
+SELECT d.id, d.name, d.phone, d.retired_yn, d.booking_yn, d.direct_yn,
        dss.status, dss.retired_date
 FROM detailer d
 LEFT JOIN detailer_supply_sheet dss
@@ -94,6 +94,7 @@ WHERE (d.name = '{input}' OR d.phone = '{input}')
 - **`retired_yn = 1`**: "퇴사한 디테일러입니다" 중단
 - **`dss.status = '파견'`**: "파견 상태 디테일러입니다. zone 변경이 적절한지 확인하세요." → AskUserQuestion으로 계속 여부 확인
 - **`dss.status` ∉ ('현직', '파견')**: "현직이 아닌 디테일러입니다 (상태: {status})" 중단
+- 🔴 **`booking_yn = 0` 또는 `direct_yn = 0`**: zone을 아무리 정확히 바꿔도 **고객 슬롯에 안 뜬다** (`findActiveDetailers` 게이트: `booking_yn=1 AND direct_yn=1 AND retired_yn=0 AND deleted_yn=0`). 복귀 디테일러는 booking_yn=0인 경우가 흔함. 사용자에게 명시하고, 배정과 함께 `UPDATE detailer SET booking_yn=1 WHERE id=?`로 켤지 확인 (부록 신규/복귀 절차 6번 참조). 2026-07-12 전승엽 실사고.
 
 ### Step 3: 현재 + **미래** schedule 전체 조회
 
@@ -359,13 +360,17 @@ ORDER BY FIELD(dwsr.day_of_week, 'MON','TUE','WED','THU','FRI','SAT','SUN');
 
 ## 부록: 신규/복귀 디테일러 스케줄 생성 (활성 스케줄 0건)
 
-2026-07-03 전승엽 Z12 배정으로 검증된 절차. 이 케이스에 한해 `detailer_work_schedule` INSERT 허용 (그 외엔 여전히 수정 금지).
+2026-07-03 전승엽 Z12 배정으로 검증된 절차. 이 케이스에 한해 `detailer_work_schedule` INSERT + `detailer.booking_yn` UPDATE 허용 (그 외엔 여전히 수정 금지).
 
 1. 과거 schedule 이력 조회 (`WHERE detailer_id = ? ORDER BY effective_from`) — 과거 근무시간/존 참고.
 2. 근무시간 결정: 과거 본인 시간 vs 목표 zone 기존 인원 시간이 다르면 AskUserQuestion으로 확인.
 3. 헤더 INSERT — **effective 경계는 KST 자정을 UTC로 저장**: D일부터 노출 = `effective_from '(D-1) 15:00:00'`, 영구 = `effective_to '2099-12-30 23:59:59'`. `type='DEFAULT'`, `slot_id=NULL`, description에 사유.
 4. rule INSERT — 요일별, `start/end_time '1970-01-01 HH:MM:SS'` UTC (10~19 KST = 01:00~10:00), `service_region_group_id=NULL`.
 5. 검증 — 노출 시뮬레이션(`effective_from <= 'D일 00:00:00' <= effective_to` + 요일 + zone), 목표 zone 해당일 명단에 포함 확인, `detailer_holiday` 확인, 최근 정상 row(예: #736)와 렌더 형태 비교.
+6. 🔴 **`booking_yn` 확인 — 안 하면 스케줄이 완벽해도 슬롯에 안 뜬다** (2026-07-12 전승엽 실사고: 복귀 처리 후 booking_yn=0이라 배정 0건). 프로덕션 슬롯 경로 `findActiveDetailers`가 `WHERE booking_yn=1 AND direct_yn=1 AND retired_yn=0 AND deleted_yn=0`로 후보를 거른다 → 하나라도 0/1 반대면 스케줄 보기도 전에 배제.
+   - 확인: `SELECT id, name, booking_yn, direct_yn, retired_yn, deleted_yn FROM detailer WHERE id=?`
+   - **복귀 디테일러는 booking_yn=0인 경우가 흔함**(오토랩/외부사업 이탈 때 꺼짐, 복귀 시 자동 안 켜짐). 0이면 `UPDATE detailer SET booking_yn=1 WHERE id=?` (단일행 WHERE + 실행 후 SELECT 검증). booking_yn write하는 제품 경로(어드민/앱/API)는 코드에 없어 DB 직접이 유일.
+   - 노출 시뮬레이션 쿼리에도 `d.booking_yn=1 AND d.direct_yn=1 AND d.retired_yn=0 AND d.deleted_yn=0`을 반드시 포함해 명단에 뜨는지 확인.
 
 **⚠️ mysql-query.sh DATETIME 렌더 함정**: SELECT 렌더값(`...Z` ISO)은 저장값−9h. 렌더값 복붙 INSERT 금지 — 반드시 `DATE_FORMAT`으로 읽은 저장 원문 기준으로 쓸 것.
 
