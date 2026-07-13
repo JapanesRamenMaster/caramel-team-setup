@@ -555,6 +555,17 @@ SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
   ```
 - 값 예시: `'외부만'`, `'외부 + 내부'`, `'[리터치] 외부만'`, `'월 2회(외부만)'`
 
+**구독 플랜의 상품 구성 조회 — `payment.name`('월 2회')만으론 구성을 알 수 없음**
+- 구독 플랜명(월 1회/월 2회)은 어떤 세차 조합인지 말해주지 않는다. 구성은 구독에 연결된 발급 세차권으로 확인:
+  ```sql
+  SELECT s.name, us.created_at
+  FROM user_service us
+  JOIN service s ON s.id = us.service_id
+  WHERE us.subscription_id = :sid AND us.deleted_yn = 0
+  ORDER BY us.created_at
+  ```
+- 예: "월 2회" 구독 = 매월 갱신 시 `'외부 + 내부'` 1매 + `'외부만'` 1매 자동 발급 (검증 2026-07-13, 구독 3101).
+
 **서비스 상품 이름 동일해도 내용 다를 수 있음**
 - 같은 이름이라도 `description`이 다름. 예: `올클린 케어 (29)`는 왁스코팅 포함, `(55)`/`(35)`는 미포함.
 - 상품 비교·집계 시 `name`만 보고 "동일"로 단정 금지. `description`도 함께 조회·확인.
@@ -618,6 +629,10 @@ BEFORE/AFTER 섹션 종류:
   3. `cart_item` → `cart` → `payment` → `payment.metadata` JSON_TABLE로 실결제 항목 추출
   4. 포인트 차감: 비례 배분 (`item_price / total_price * point_amount`)
   5. 최종: `sale_price = base_price - point_alloc`
+
+**구독 갱신 결제액이 매달 다른 이유 — `payment.metadata.prices`로 추적**
+- 같은 구독인데 결제액이 월마다 변동(예: 111k~124k)하면 프로모션 할인. `metadata.prices[]`의 `originalPrice`(정가) vs `price`(실결제) 차이 + `promotionApplicationId` 존재 여부로 판별.
+- 첫 결제의 `metadata.params`엔 유입 UTM(utm_source 등)이 그대로 저장돼 있어 구매 유입 채널 역추적 가능. (검증 2026-07-13)
 
 ### 6g. CRM 메시지 발송 로그 (`message`)
 
