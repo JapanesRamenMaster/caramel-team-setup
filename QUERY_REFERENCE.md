@@ -373,7 +373,9 @@ first_sub_reservations AS (
 - `detailer_work_schedule_rule`: schedule_id, day_of_week(MON~SUN), start_time, end_time (UTC), zone_id
   - `deleted_at IS NULL` 조건 필수
 
-**슬롯 타임 (TARGET_TIMES, UTC → KST)**
+**슬롯 타임 그리드 (capacity 집계용 근사, UTC → KST)**
+
+⚠️ 아래 08~22 그리드는 **Grafana 공급량/가동률 집계용 근사 그리드**일 뿐, 고객에게 실제 노출되는 슬롯 시각의 출처가 아니다. 캐파 카운팅(1인당 5슬롯 등)에만 쓴다.
 
 | UTC | KST |
 |-----|-----|
@@ -385,6 +387,14 @@ first_sub_reservations AS (
 | 09:00 | 18:00 |
 | 11:00 | 20:00 |
 | 13:00 | 22:00 |
+
+**실제 노출 슬롯 시각의 출처 (2026-07-13 확정) — ⚠️ caramel-api 파지 말 것**
+- 콜 콘솔·고객앱 예약 슬롯 = **caramel-zero `apps/api` `scheduling` 도메인의 하드코딩 상수** (`generate-time-slots.policy.ts`, zero-api `POST /v1/admin/scheduling/time-slots/query`). ⚠️ 레거시 caramel-api `time-slot.service.ts`(TARGET_TIMES 08·10·12…)는 죽은 경로 — 여기 파면 헛다리.
+- ⚠️⚠️ **반얀트리(BANYAN_TREE) 슬롯 ≠ 일반(DEFAULT) 슬롯 = 완전히 다른 시스템.**
+  - **반얀트리**: 고정 상수 `SEOUL_BANYAN_TREE_SLOT_START_TIMES_UTC` → **KST 09·11·14·16·18** (반얀 주소=장충단로 60 매칭 시에만).
+  - **일반(DEFAULT)**: zone·동선·이동시간 기반의 다른 스케줄링. **슬롯 시각 로직 미조사** — 위 08~22 그리드로 추론하지 말 것.
+- 실제 노출 = 상수 그리드 ∩ rule 근무 윈도우 ∩ 가드(예약버퍼·시각겹침·하루 `MAX_RESERVATIONS_PER_DAY=7`).
+- 그리드는 타입별 공용 상수 → 특정 디테일러만 다른 시각대 주려면 DB 아닌 **코드 변경 필요**.
 
 **슬롯 가용 판단**
 - X시 슬롯 공급 가능 = rule의 `start_time(KST) ≤ X시` AND `end_time(KST) ≥ X+1시`
@@ -403,8 +413,9 @@ first_sub_reservations AS (
 
 **detailer_work_schedule.type — DEFAULT만 있는 게 아니다 (2026-07-13)**
 - `type` 값: `DEFAULT`(일반 존 배정) / `BANYAN_TREE`(반얀트리 주소 전용) / `HEY_DEALER`(외부 사업 이탈 마커, lookup에서 제외).
-- 코드 lookup이 type별로 분리 조회 → **반얀트리 상주 배정은 zone rule이 아니라 `type='BANYAN_TREE'`** + `slot_id`(→`detailer_slot` 슬롯 템플릿: 3=반얀 1팀 07:30~14:30, 4=2팀, 5=3팀) + rule `service_region_group_id=2`(서울 중구)·`zone_id=NULL`. zone 테이블만 뒤지면 못 찾는다.
-- 같은 slot_id를 가진 디테일러 N명 = 슬롯당 캐파 N배.
+- 코드 lookup이 type별로 분리 조회 → **반얀트리 상주 배정은 zone rule이 아니라 `type='BANYAN_TREE'`** + rule `service_region_group_id=2`(서울 중구)·`zone_id=NULL`. zone 테이블만 뒤지면 못 찾는다.
+- ⚠️ **`slot_id`(→`detailer_slot`)는 데드 데이터 (2026-07-13 확정).** 슬롯 생성 경로에서 안 읽힘 — slot_id를 바꾸거나 `detailer_slot`을 INSERT해도 실제 노출 슬롯 시각엔 무영향. 반얀 세팅 시 관례로 채우긴 하나(김형현·손정민 slot 3), 시각을 결정하는 건 slot_id가 아니라 **상수 그리드 ∩ rule 윈도우**다. 슬롯 조사에서 이 테이블 보지 말 것.
+- 반얀 상주 디테일러 N명 = 슬롯당 캐파 N배 (slot_id 때문이 아니라 같은 시각대에 N명이 서빙).
 - **기간 파견 패턴 = 스케줄 3토막**: ①기존 스케줄 `effective_to` 단축 ②파견 스케줄(기간 한정) INSERT ③복귀 스케줄(파견 종료 익일~영구) INSERT. ③을 빼먹으면 파견 종료 후 배정 공백.
 
 **detailer_holiday 처리**

@@ -1061,7 +1061,7 @@ END AS sub_type
 |------|------|-----|--------|------|
 | id | Int | NO | autoincrement | PK |
 | detailer_id | Int | NO | - | FK → detailer |
-| slot_id | Int | YES | - | FK → detailer_slot |
+| slot_id | Int | YES | - | FK → detailer_slot (**⚠️ 데드 — 슬롯 생성에 안 읽힘. slot_id·detailer_slot 값은 실제 노출 슬롯에 무영향. 2026-07-13**) |
 | effective_from | DateTime | NO | - | 적용 시작일 |
 | effective_to | DateTime | NO | - | 적용 종료일 |
 | description | Text | YES | - | 설명 |
