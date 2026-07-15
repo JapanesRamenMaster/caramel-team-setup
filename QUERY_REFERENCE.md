@@ -139,6 +139,23 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 - **패턴 C (첫차)**: 유저의 첫 등록차가 타겟인지 — 신규 등록 코호트 지표에만.
 - 같은 "타겟 비율"이라도 A/B/C 숫자가 다르다 (실측: B 전환 시 고객수 +7%, 침투율 +5%p). **타겟 고객 분석은 B로 통일** (CBR v2 표준). 예외: 침투율 분모=전체 유입(타겟 필터 없음), 타겟차 신규 등록수=패턴 C 유지.
 
+**검사임박(정기검사 만료) 차량 조회 — `car.next_car_inspection_at`**
+- ⚠️ **타임존 트랩**: `next_car_inspection_at`은 UTC 저장이나 값이 **KST 자정**이라 raw가 `...15:00:00`로 보임 (예 raw `2026-08-12 15:00:00` = 검사만료 KST `2026-08-13`). **raw로 D±N 윈도우 필터하면 하루/타임존 어긋남** → 반드시 `DATE(CONVERT_TZ(c.next_car_inspection_at,'+00:00','+09:00'))` 후 비교. `last_wonbu_at`(마지막 원부조회 시각)도 UTC 저장 → KST 표기 시 CONVERT_TZ.
+- 표준 패턴 (타겟 + 실고객 + D+20~D+30 예시):
+  ```sql
+  SELECT c.plate_number, cm.name, c.model_year,
+    DATE_FORMAT(CONVERT_TZ(c.next_car_inspection_at,'+00:00','+09:00'),'%Y-%m-%d') AS insp_end_kst
+  FROM car c
+  JOIN car_model_target t ON c.model_id=t.id AND t.is_target=1   -- 타겟
+  LEFT JOIN car_model cm ON c.model_id=cm.id
+  JOIN app_user u ON c.user_id=u.id
+  WHERE c.deleted_yn=0 AND (c.temp_yn IS NULL OR c.temp_yn=0)      -- 실차
+    AND u.test_yn=0 AND u.phone IS NOT NULL                        -- 실고객
+    AND DATE(CONVERT_TZ(c.next_car_inspection_at,'+00:00','+09:00'))
+        BETWEEN DATE_ADD(CURDATE(),INTERVAL 20 DAY) AND DATE_ADD(CURDATE(),INTERVAL 30 DAY)
+  ```
+- **원부 배치 재조회는 `next_car_inspection_at`을 갱신한다** (`curl -sG gateway-prod.thetrive.com/careplus/wonbu --data-urlencode carPlateNumber=<판>`, 무인증, 건당 `#caramel_원부조회` 채널 게시). ⟹ 재조회 후 검사완료 차량은 만료일이 미래로 밀려 **윈도우 밖으로 이동**하므로, "재조회 → 같은 윈도우 재쿼리" 시 대상 수가 줄어드는 게 정상. 임시/말소 번호판은 HTTP 500(원부서버 미반환).
+
 ### 2e. 주소/좌표 COALESCE 패턴
 
 `reservation.latitude/longitude`는 @deprecated (Prisma 스키마 2026-04-28~). 신규 예약은 `user_address`에만 좌표가 있을 수 있음. Zone 매핑·좌표 쿼리는 반드시 COALESCE:
@@ -195,6 +212,12 @@ LEFT JOIN zone z ON ST_Contains(z.area,
 **파견 디테일러**: `supply_sheet.status='파견'` 기준 (현재 7명). 대부분 work_schedule_rule 없음 (15명 중 13명).
 - capacity 쿼리, "근무 디테일러수" 메트릭 모두 UNION으로 합산 (= 워크 발생 디테일러 ∪ 현재 파견자)
 - `supply_sheet`에 status 변경 이력 없음 — 파견↔현직 전환이 발생하면 12개월 시계열 전체가 retroactive하게 변동됨.
+
+**셀(cell) 소속 — `detailer_supply_sheet.cell_name` (⚠️ zone과 다른 축)**:
+- 셀장 판별 = `position='셀장' AND status='현직'`. 셀원 = `cell_name = <셀장 이름>` (같은 status 조건).
+- ⚠️ **한 셀이 여러 zone(region)에 걸친다.** cell_name ≠ region/zone. 예: 이승원 셀 = Z1·Z6·Z17 3개 zone에 멤버 분산. 셀장 본인 `region`(Z1)은 셀장이 일하는 zone 하나일 뿐 셀 커버리지가 아님.
+- 셀원 명단: `WHERE cell_name='<셀장>' AND status='현직'` — zone/region으로 셀을 재구성하려 하면 누락(타 zone 셀원)+혼입(같은 zone 타 셀원)이 동시에 발생.
+- 파견 셀(오토랩·헤이딜러·인천테슬라 등)은 region이 Z코드가 아닌 텍스트.
 
 두 테이블 JOIN 시 `COLLATE utf8mb4_general_ci` 필수.
 

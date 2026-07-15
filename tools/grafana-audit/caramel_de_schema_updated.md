@@ -138,7 +138,7 @@
 | vin | VarChar(100) | YES | - | 차대번호 |
 | temp_yn | Boolean | YES | false | 임시 차량 |
 | manufacture_at | DateTime | YES | - | 제조일 |
-| next_car_inspection_at | DateTime | YES | - | 다음 검사일 |
+| next_car_inspection_at | DateTime | YES | - | 다음 정기검사 만료일. ⚠️ UTC 저장이나 값은 KST 자정(raw `...15:00:00` = 검사만료 KST 다음날). 윈도우 필터 시 `DATE(CONVERT_TZ(col,'+00:00','+09:00'))` 필수. 원부 재조회로 갱신됨 |
 | registered_at | DateTime | YES | - | 최초 등록일 |
 | final_registered_at | DateTime | YES | - | 최종 등록일 |
 | subscription_id | Int | YES | - | FK → subscription |
@@ -146,7 +146,7 @@
 | car_front_tire_info | VarChar(45) | YES | - | 전륜 타이어 정보 |
 | car_rear_tire_info | VarChar(45) | YES | - | 후륜 타이어 정보 |
 | salesforce_id | VarChar(18) | YES | - | Salesforce ID |
-| last_wonbu_at | DateTime | YES | - | 마지막 원부 조회일 |
+| last_wonbu_at | DateTime | YES | - | 마지막 원부 조회 시각 (UTC 저장, KST 표기 시 CONVERT_TZ). 원부 재조회 시 now로 갱신 |
 | uuid | VarChar(40) | YES | - | UUID (unique) |
 | brand_id | Int | YES | - | FK → car_brand |
 | model_id | Int | YES | - | FK → car_model |
