@@ -435,7 +435,8 @@ first_sub_reservations AS (
 - Fill Rate = `실제 예약 디테일러 수 / 스케줄 기반 공급 가능 디테일러 수`
 
 **detailer_work_schedule.type — DEFAULT만 있는 게 아니다 (2026-07-13)**
-- `type` 값: `DEFAULT`(일반 존 배정) / `BANYAN_TREE`(반얀트리 주소 전용) / `HEY_DEALER`(외부 사업 이탈 마커, lookup에서 제외).
+- `type` 값: `DEFAULT`(일반 존 배정) / `BANYAN_TREE`(반얀트리 주소 전용) / `BANYAN_TREE_EXTENDED`(반얀 확장 그리드, 2026-07-16 prod 실존 확인) / `HEY_DEALER`(외부 사업 이탈 마커, lookup에서 제외).
+- ⚠️ 반얀 상주 조회 시 `type='BANYAN_TREE'` 등호 필터는 `BANYAN_TREE_EXTENDED`를 놓친다 — **`type LIKE 'BANYAN_TREE%'`** 로 잡을 것.
 - 코드 lookup이 type별로 분리 조회 → **반얀트리 상주 배정은 zone rule이 아니라 `type='BANYAN_TREE'`** + rule `service_region_group_id=2`(서울 중구)·`zone_id=NULL`. zone 테이블만 뒤지면 못 찾는다.
 - ⚠️ **`slot_id`(→`detailer_slot`)는 데드 데이터 (2026-07-13 확정).** 슬롯 생성 경로에서 안 읽힘 — slot_id를 바꾸거나 `detailer_slot`을 INSERT해도 실제 노출 슬롯 시각엔 무영향. 반얀 세팅 시 관례로 채우긴 하나(김형현·손정민 slot 3), 시각을 결정하는 건 slot_id가 아니라 **상수 그리드 ∩ rule 윈도우**다. 슬롯 조사에서 이 테이블 보지 말 것.
 - 반얀 상주 디테일러 N명 = 슬롯당 캐파 N배 (slot_id 때문이 아니라 같은 시각대에 N명이 서빙).
@@ -667,6 +668,15 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - 채널은 `type`별로 대체로 고정(윈백·구독갱신·자동예약=ALIMTALK, 쿠폰만료는 알림톡/푸시가 별도 `type`).
 - **CRM 7일 예약전환 측정**: received(테스터 제외 live_users §5b) → 발송 후 7일 내 `reservation` 생성(`r.user_id = m.customer_id`, `r.created_at` 기준, `r.deleted_yn=0`. raw·비인과). `(customer_id, type)`별 첫 발송 dedup. 상세·재현쿼리 = caramel-api `docs/superpowers/specs/2026-06-30-crm-kill-keep-map.md` §2/§6.
 
+### 6h. 050 안심번호/통화 (`telephony_call_log`·`customer_vno`) (2026-07-16)
+
+디테일러↔고객 050 통화(세종 050Biz) 기록. 2026-07-08 prod 가동.
+
+- **`telephony_call_log`**: 050 경유 통화의 CDR. `call_started_at`은 **UTC 저장**(+9h 필요, `reservation_datetime`과 동일). 예약 귀속 = `reservation_id`/`detailer_id`/`customer_vno_id` — 크론 `telephonyAttributeCalls`(*/10분)가 사후에 채움. **미귀속 2~4건/일은 정상**(부분귀속 설계: vno 매칭만 되고 예약 모호). 발신자/수신자 = `calling_num`(디테일러 실번호)·`vno`(고객 050)·`called_num`(고객 실번호).
+- ⚠️ **"통화 수 적다" ≠ 장애**: 예약 중 050 통화가 잡히는 비율은 **30~45%가 정상 밴드**. 디테일러 절반가량은 앱 050 발신을 안 씀(문자 사용 — SMS는 시스템 미캡처 / 저장된 실번호 직발신). 19시 KST 통화 스파이크(일요일 포함)는 D-1 저녁 사전 확인콜로 정상.
+- **`customer_vno`**: 고객에게 050 동적 부여. **user_id 단위 키잉(폰번호 아님)** — 한 폰이 여러 app_user면 특정 user_id에만 붙음. 통화↔vno 매칭 구간 = `[assigned_at, COALESCE(cleared_at, expires_at)]`. ⚠️ `ASSIGN_FAILED` 대량(수십 건/일) = 더미폰 유저(01012345678류) 매시 재시도 반복이지 시스템 장애 아님 — `COUNT(DISTINCT user_id)`로 먼저 확인.
+- **크론 실행 기록 = `job_execution`**(`job_id`→`job.name`, telephony 크론 8종). ⚠️ **status='FAILED'여도 장애 단정 금지** — 유저 1명 실패해도 execution 전체가 FAILED로 기록됨. `result` JSON의 `failureCount`/`successCount`를 먼저 볼 것.
+
 ---
 
 ## 7. 주요 테이블 컬럼 치트시트
@@ -765,6 +775,8 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 
 **Active 디테일러 필터:** `d.deleted_yn=0 AND d.retired_yn=0 AND d.admin_yn=0`
 
+⚠️ **이름으로 디테일러 찾을 땐 `detailer.name`으로 검색** — `JOIN app_user ON user_id` 후 `app_user.name`으로 찾으면 일부 디테일러가 누락된다 (실사례 2026-07-16: 염철림(165)은 app_user.name으로 안 잡히고 detailer.name에만 있음).
+
 ---
 
 ### subscription
@@ -792,7 +804,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | user_id | int | FK → app_user.id |
 | service_id | int | FK → service.id |
 | deleted_yn | tinyint(1) | 0=정상 |
-| postpaid_yn | tinyint(1) | 0=선불, 1=후불 |
+| postpaid_yn | tinyint(1) | 0=선불, 1=후불(레거시: 선불권 소진 시 자동생성 후불권) **⚠️ 온보딩 '후불 결제(현장수금)' 예약은 postpaid_yn=0으로 생성됨 — 후불 판별에 이 컬럼 단독 사용 금지, `reservation_onsite_collection` 참조** |
 | applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
 
 **세차 내용(서비스명) 조회:**
@@ -803,6 +815,38 @@ LEFT JOIN (
 ) us ON us.reservation_id = r.id
 LEFT JOIN service s ON s.id = us.service_id
 -- s.name 예시: '외부만', '외부 + 내부', '[리터치] 외부만'
+```
+
+---
+
+### reservation_onsite_collection (온보딩 후불 결제/현장 수금, 2026-07-11 prod~)
+온보딩 v3의 **'후불 결제' 예약 canonical marker**. 예약 시 결제 없이 세차 현장에서 수금.
+
+- **후불 예약 판별 = 이 테이블에 row 존재 + `status <> 'CANCELED'`.** (⚠️ `user_service.postpaid_yn` 아님 — 온보딩 후불의 user_service는 `postpaid_yn=0`으로 생성됨. postpaid_yn=1은 레거시 구독 후불권.)
+- 컬럼: `reservation_id`(UNIQUE FK→reservation), `user_id`(FK→app_user), `status`(PENDING=수금대기/REQUESTED/CONFIRMED/CANCELED, NOT NULL DEFAULT PENDING), `collection_method`(CARD_TERMINAL/BANK_TRANSFER/PAYMENT_LINK), `requested_at`. created_at은 UTC 저장.
+- 예약 취소 시 status→CANCELED로 함께 전이됨.
+- **수금액 계산**: `reservation_onsite_collection_item.amount_snapshot` 합(`canceled_at IS NULL`만) + `reservation_onsite_collection_item_adjustment.amount` 합(할인=음수, 쿠폰 등).
+- 후불 선택 가능 조건: 타겟 차량(`car_model_target.is_target=1`)만.
+
+```sql
+-- 신규 예약 선불/후불 분류 (테스터·취소 제외)
+SELECT CASE WHEN roc.id IS NOT NULL THEN '후불' ELSE '선불' END AS pay_type, COUNT(*)
+FROM reservation r
+JOIN app_user au ON au.id=r.user_id AND au.test_yn=0 AND au.deleted_yn=0
+LEFT JOIN reservation_onsite_collection roc
+  ON roc.reservation_id=r.id AND roc.status<>'CANCELED'
+WHERE r.created_at >= %s AND r.created_at < %s  -- UTC 경계
+  AND r.deleted_yn=0 AND r.status<>'CANCELED'
+GROUP BY 1;
+
+-- 후불 예약별 수금액
+SELECT roc.reservation_id, roc.status,
+ (SELECT COALESCE(SUM(i.amount_snapshot),0) FROM reservation_onsite_collection_item i
+   WHERE i.collection_id=roc.id AND i.canceled_at IS NULL)
+ + (SELECT COALESCE(SUM(a.amount),0) FROM reservation_onsite_collection_item_adjustment a
+   JOIN reservation_onsite_collection_item i2 ON a.collection_item_id=i2.id
+   WHERE i2.collection_id=roc.id AND i2.canceled_at IS NULL) AS amount_to_collect
+FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 ```
 
 ---
