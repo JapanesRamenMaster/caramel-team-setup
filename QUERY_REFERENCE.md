@@ -195,6 +195,18 @@ LEFT JOIN zone z ON ST_Contains(z.area,
   - `MANUAL_EVENT_IMPORT`: 관리자 수동 입력
 - ⚠️ `reserved_with_date` 컬럼은 레거시 — 능동/자동 구분에 사용 불가. 실제 분포: 0=~12500건, 1=98건뿐.
 
+### 2h. "중복 예약" 신고 진단 — 신고된 날짜/시각으로 좁혀 검색하지 말 것
+
+디테일러/CS가 "N시·M시 중복 예약"이라 신고해도 **그 날짜에 해당 시각 예약이 아예 없을 수 있음** (2026-07-19 실사례: "4시·6시 중복" 신고 → 당일엔 18시 1건뿐, 실체는 7/31 18시 + 8/3 16시).
+
+- 실체는 대개 **구독 자동예약 클러스터 쌍**: 같은 배치(`created_at` 동일)로 생성된 2건이 ±7일 날짜밀림으로 며칠 간격까지 붕괴한 것.
+- 진단 절차: 신고 시각으로 검색 → 없으면 **고객의 CONFIRMED 전체를 `created_at` 배치별로 묶어** ① 배치 쌍 간격 붕괴(2주 미만) ② 월별 건수가 플랜(월 N회) 초과인지 확인.
+```sql
+SELECT id, DATE_FORMAT(CONVERT_TZ(reservation_datetime,'+00:00','+09:00'),'%Y-%m-%d %H:%i') dt_kst,
+       created_at FROM reservation WHERE user_id=? AND status='CONFIRMED' ORDER BY reservation_datetime;
+```
+- 처리는 어드민 API `bulk-cancel` + `ticketAction: GIVE_BACK`(세차권 반환, §5c 재발급 메커니즘 참고). DB 직접 UPDATE 금지.
+
 ---
 
 ## 3. 디테일러 쿼리 필수 패턴
@@ -320,6 +332,8 @@ AND r.id NOT IN (
 ```
 
 **취소율 측정 함정**: `user_service`는 예약 취소 시 `deleted_yn=1`로 soft-delete됨. 취소 건을 분모에 넣으려면 `deleted_yn` 필터를 빼야 함 — 안 그러면 취소가 통째로 빠져 취소율이 0%로 왜곡.
+
+**취소 시 세차권 "반환" = 새 row 재발급 (2026-07-19 실측)**: 예약 취소(어드민 bulk-cancel `ticketAction=GIVE_BACK` 등)로 세차권이 반환되면 기존 `user_service` row의 `used_yn`을 0으로 되돌리는 게 아니라 ① 기존 row는 `used_yn=1`·`deleted_yn=1`로 soft-delete되고 `reservation_id` 연결이 그대로 남으며 ② 동일 `service_id`의 새 미사용 row(`used_yn=0`, `reservation_id=NULL`)가 새로 생성됨. ⟹ row 수를 발급 수로 세면 이중계산, `deleted_yn=1`을 "소실"로 세면 오판(반환분은 새 row로 살아 있음).
 
 ### 5d. 구독 status=ACTIVE 필터
 
@@ -448,6 +462,12 @@ first_sub_reservations AS (
 - 부분 시간 → 겹치는 슬롯만 차감
 - `v_detailer_holiday_daily` 뷰 한계 있음 — capacity 쿼리에서는 `detailer_holiday` 직접 조회 권장
 - ⚠️ **"왜 슬롯에 안 뜨나" 진단에선 반대 — 휴무는 길이 무관 하드 차단** (2026-07-13). 플래그(booking_yn 등)·스케줄·rule이 다 정상이어도 해당 날짜에 holiday row 있으면 노출 0. 운영이 파견/별동대를 **매일 full-day 휴무 bulk INSERT**로 마킹하는 패턴이 있으니(같은 created_at·memo 예 "정비별동대") 미노출 진단 시 `memo` 확인 필수.
+
+**예약↔근무스케줄 정합성 감사 패턴 (2026-07-19, 반얀 재배정 사고 전수조사)**
+- 재배정/파견 후 "예약이 디테일러 근무 밖에 배정됐나" 검증은 3축: ①근무윈도우 밖 = `reservation` × `NOT EXISTS`(rule 윈도우 매칭) ②휴무 겹침 ③동시각 이중배정 = `GROUP BY detailer_id, reservation_datetime HAVING COUNT(*)>1`.
+- rule 윈도우 매칭 정석: `ru.day_of_week = UPPER(DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%a'))` (**KST 요일** 기준) + `TIME(CONVERT_TZ(r.reservation_datetime,...,'+09:00')) >= TIME(DATE_ADD(ru.start_time, INTERVAL 9 HOUR)) AND ... < TIME(DATE_ADD(ru.end_time, INTERVAL 9 HOUR))` (end 배타적). `ru.deleted_at IS NULL` 포함. 스케줄은 `effective_from <= r.reservation_datetime < effective_to`.
+- ⚠️ **재배정 API는 근무윈도우 밖 배정도 통과시킬 수 있다** (실증 2026-07-19: 08~17 근무자에게 18시 예약 배정 성공 — 이한결 사례). "시스템이 막아줬겠지" 가정 금지 — 대량 재배정 후엔 위 감사 필수.
+- ⚠️ **`detailer_holiday`에 `from`=`to`인 '무력화' row 실존** (blanket 휴무 해제 시 삭제 대신 from=to로 눌러두는 관례, 2026-07-18 반얀 파견 해제). from/to range 겹침 판정에선 자동 배제되지만, row 존재/COUNT 기반 "휴무 있음" 판정은 오판 → **`from <> to` 필터** 필수.
 
 **주말 데이터 주의**
 - 주말 디테일러 2~3명 → fill rate 스윙이 큼
@@ -806,6 +826,8 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | deleted_yn | tinyint(1) | 0=정상 |
 | postpaid_yn | tinyint(1) | 0=선불, 1=후불(레거시: 선불권 소진 시 자동생성 후불권) **⚠️ 온보딩 '후불 결제(현장수금)' 예약은 postpaid_yn=0으로 생성됨 — 후불 판별에 이 컬럼 단독 사용 금지, `reservation_onsite_collection` 참조** |
 | applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
+
+- ⚠️ **취소 반환 = soft-delete + 새 row 재발급** (기존 row는 `deleted_yn=1`·`reservation_id` 유지, 새 미사용 row 생성) → 상세 §5c.
 
 **세차 내용(서비스명) 조회:**
 ```sql
