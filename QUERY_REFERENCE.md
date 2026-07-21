@@ -70,15 +70,18 @@ CONFIRMED가 포함되므로 §2b 유령예약 체크(`car` EXISTS)도 함께 �
 
 ### 2b. 유령예약 제거 (CONFIRMED 집계 시 필수)
 
-반복구독 고객의 미래 예약은 배치 생성되는데, 세차권(`user_service`)이 없거나 차량(`car`)이 삭제된 상태로 CONFIRMED가 남아 있을 수 있음. 이 유령예약이 집계에 포함되면 과다 카운트.
+반복구독 고객의 미래 예약은 배치 생성되는데, 세차권(`user_service`)이 없거나 차량(`car`)이 삭제됐거나 **고객이 탈퇴(`app_user.deleted_yn=1`)** 한 상태로 CONFIRMED가 남아 있을 수 있음. 이 유령예약이 집계에 포함되면 과다 카운트.
 
-**예약수 세는 모든 쿼리에 아래 두 조건 추가 필수:**
+**예약수 세는 모든 쿼리에 아래 세 조건 추가 필수:**
 ```sql
 AND EXISTS (SELECT 1 FROM user_service us WHERE us.reservation_id = r.id AND us.deleted_yn = 0)
 AND EXISTS (SELECT 1 FROM reservation_car rc JOIN car c ON rc.car_id = c.id WHERE rc.reservation_id = r.id AND c.deleted_yn = 0)
+AND EXISTS (SELECT 1 FROM app_user u WHERE u.id = r.user_id AND u.deleted_yn = 0)
 ```
 
 WASHED 완료 건만 세는 쿼리엔 실질적 영향 없음. CONFIRMED 포함 집계에서 특히 중요.
+
+⚠️ **고객 탈퇴 축(`app_user.deleted_yn`)을 빠뜨리기 쉬움.** 디테일러앱/어드민 예약목록 API(caramel-api `careplus-detailer.service.ts`)는 Prisma where에 `user:{deleted_yn:0}`(user 모델=`@@map("app_user")`)를 걸어 **탈퇴 고객 예약을 노출하지 않는다** — 특히 QA 테스트 계정(name='asdf' 등)이 탈퇴 후 CONFIRMED 예약만 잔존하는 경우가 흔함. 세차권·차량만 체크하면 이 유령이 남아 이중예약/충돌 검출에서 오탐(2026-07-21 충돌감사 크론이 김민호 동시각 2건으로 오보 — 1건은 탈퇴고객 유령).
 
 ### 2c. 완료 시각 vs 예약 시각 (washed_at vs reservation_datetime)
 
