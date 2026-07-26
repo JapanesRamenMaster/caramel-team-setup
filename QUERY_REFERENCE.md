@@ -194,6 +194,7 @@ LEFT JOIN zone z ON ST_Contains(z.area,
                      ST_GeomFromText(CONCAT('POINT(',lng,' ',lat,')'),0)) / 1000  -- km
   ```
 - ⚠️ **zone 폴리곤이 아예 없는 구가 있다**(중구·광진·양천·동작·관악·종로 등). 그 주소는 최근접 fallback으로 엉뚱한 zone에 떨어진다(예: 중구 신당동 → Z9). **"존 외"로 잡힌 건이 실은 폴리곤 공백 산물일 수 있으니, 존 일치를 목표로 삼기 전에 실거리부터 볼 것.**
+- ⚠️ **반대로 폴리곤이 행정구역을 넘어 과하게 뻗은 경우도 있다.** 실측(2026-07-26): **성남시 중원구 여수동(127.12757, 37.41799)은 `ST_Contains`상 Z16(강동/송파) 단독 포함**이고 Z0(성남)은 미포함(convex hull에만 걸림). ⟹ **성남 예약이 Z16 담당자에게 붙는 것은 시스템상 "정상"**이다. 행정구역명과 zone 이름이 안 맞는다고 곧바로 오배정을 선언하지 말고 `ST_Contains`로 실판정할 것.
 
 ### 2g. source_type 능동/자동 구분
 
@@ -302,13 +303,31 @@ JOIN detailer d ON d.id = s.detailer_id
   AND d.booking_yn=1 AND d.direct_yn=1 AND d.retired_yn=0 AND d.deleted_yn=0   -- §3a
 LEFT JOIN res x ON x.detailer_id = s.detailer_id
 WHERE NOT EXISTS (SELECT 1 FROM res y WHERE y.detailer_id=s.detailer_id AND y.kst=:target_hhmm)
+  -- ① 종일 휴무만 종일 탈락 (부분 블록을 여기 섞으면 근무 가능자가 통째로 사라진다 — 항목 4)
   AND NOT EXISTS (SELECT 1 FROM detailer_holiday h WHERE h.detailer_id=s.detailer_id
-                    AND h.from <> h.to AND h.from < :kst_day_end_utc AND h.to > :kst_day_start_utc)
+                    AND h.from <> h.to AND TIMESTAMPDIFF(HOUR, h.from, h.to) > 8
+                    AND h.from < :kst_day_end_utc AND h.to > :kst_day_start_utc)
+  -- ② 부분 시간 블록은 "그 시각만" 탈락
+  AND NOT EXISTS (SELECT 1 FROM detailer_holiday h WHERE h.detailer_id=s.detailer_id
+                    AND h.from <> h.to AND h.from <= :target_utc AND h.to > :target_utc)
 GROUP BY s.detailer_id, d.name ORDER BY min_km;
 ```
 3. **채택 판단은 거리가 아니라 "동선 사이에 끼는가"** — 후보의 직전/직후 예약 시각·좌표를 뽑아 삽입 가능한지 본다(+ 하루 5건 캡). 목표가 기존 동선 한복판에 떨어지는 후보가 정답.
 4. ⚠️ `detailer_holiday`는 **UTC 저장**이라 "그날 휴무" 판정 윈도우는 `from < 'X일 14:59:59' AND to > '(X-1)일 15:00:00'`. `from <> to` 필터도 같이(§6b 무력화 row). 그래도 예약이 있는 사람이 휴무로 잡히는 경우가 있으니 **route와 교차확인**.
+   - 🔴 **하루 겹침만 보면 "부분 시간 블록"이 종일 탈락으로 번져 후보를 잃는다 (2026-07-26 실사례).** 황석찬(114)에게 memo `셀원 품질 점검`으로 **매일 UTC 05:00~09:00(=KST 14~18시) 4시간 row가 4월~8월 대량 선삽입**돼 있어, 겹침 필터로는 "휴무 있음"이 되지만 오전은 근무 가능이다. **판별 = `TIMESTAMPDIFF(HOUR, from, to) > 8`이면 종일, 이하면 부분 블록**(+`memo` 확인). 위 쿼리처럼 두 NOT EXISTS로 분리할 것.
+   - ⚠️ 반대 방향도 틀린다 — 같은 사람에게 **종일 row가 별도로 존재**할 수 있다(황석찬은 `출산 휴가 - 연차` 7/19~7/31 종일 row가 있어 결과적으로 탈락). **부분/종일 둘 다 조회해야 정답.** 한쪽만 보고 "가용/불가"를 확정하지 말 것.
 5. 실행 전 §6b "재배정 대상 사전검증"을 반드시 통과시키고, 실행은 재배정 API로(DB 직접 UPDATE 금지). `skipConflictCheckYn=false`로 두면 TMap 실이동시간 기반 충돌체크가 돌아 삽입 타당성을 한 번 더 걸러준다.
+6. **교체 전 고객 통지 상태 확인** — D-1 알림톡 본문엔 담당 디테일러 **이름**이 들어간다(§6g). 이미 나갔으면 교체 시 고객이 본 이름이 바뀌므로 재통지 필요.
+
+### 3d. 파견 전환 잔존 예약 — "존 외"의 세 번째 원인 (2026-07-26)
+
+오배정도 슬롯 누수도 아닌 통로. **디테일러를 파견(반얀 등)으로 전환할 때 `detailer_work_schedule`만 갈아끼우고, 그 전에 이미 잡혀 있던 미래 예약은 아무도 되돌아보지 않는다.** 스케줄 변경 → 기존 미래 예약 재검증/재배정 메커니즘이 시스템에 **없다**.
+
+- 실사례: 한수용(191) `BANYAN_TREE_EXTENDED`(7/20~8/31) 스케줄을 **7/18 21:59에 생성** → 그 전 배정된 Z16 권역(강동·송파·하남·성남) 예약이 파견기간에 **45건/18일** 잔존. 하루 것만 처리하면 4~5건 겹치는 날에 계속 재발하므로 **처음부터 파견기간 전체를 뽑을 것.**
+- **진단 = 파견 스케줄 `created_at`을 기준선으로 before/after 가르기.** 파견기간 내 비-파견지 예약 중 `r.created_at >= (파견 스케줄 created_at)`인 게 0건이면 **잔존 tail**(과거 배정분), >0이면 **진행형 누수**(신규가 계속 붙는 중). 처방이 다르다 — tail은 일괄 재배정, 누수는 코드/스케줄 수정.
+- 🔴 **`reservation_datetime` 상한을 파견 `effective_to`로 반드시 걸어라.** 파견 **종료 후** 날짜는 복귀 DEFAULT 스케줄 구간이라 그 존 예약이 정상이다. 상한 없이 세면 복귀 구간 예약(한수용 9월 8건, 구독 자동예약 `created_at` 03:0x)을 "누수"로 오판한다.
+- 구독 자동예약이 몇 주 앞을 미리 깔아두므로(§6b) 파견 결정 시점엔 이미 한 달 반 뒤까지 채워져 있다 = tail은 항상 크다.
+- ⚠️ **배정 당시엔 존 외가 아니었을 수 있다** — 판정은 "지금 스케줄"이 아니라 **예약 생성 시점의 effective 스케줄**(`effective_from <= 생성시점 < effective_to`)로. 지금 기준으로 존 외라고 오배정 선언하지 말 것.
 
 ---
 
@@ -503,7 +522,7 @@ first_sub_reservations AS (
 **detailer_holiday 처리**
 - 단기(≤7일) full-day (`from ≤ 당일 00:00` AND `to ≥ 익일 00:00`) → 실제 off
 - 장기(>7일) → capacity 집계에선 무시 (파견/퇴사 등 운영 메모)
-- 부분 시간 → 겹치는 슬롯만 차감
+- 부분 시간 → 겹치는 슬롯만 차감. ⚠️ **매일 반복되는 4시간짜리 부분 블록이 수개월분 선삽입돼 있는 경우가 있다**(memo `셀원 품질 점검` = UTC 05:00~09:00 = KST 14~18시, 황석찬114에 4~8월분). 하루 겹침 COUNT로 "휴무"를 세면 오전 근무 가능자가 통째로 탈락 → **`TIMESTAMPDIFF(HOUR, from, to) > 8`로 종일/부분을 갈라** 종일만 종일 탈락시킬 것(§3c 항목 4).
 - `v_detailer_holiday_daily` 뷰 한계 있음 — capacity 쿼리에서는 `detailer_holiday` 직접 조회 권장
 - ⚠️ **"왜 슬롯에 안 뜨나" 진단에선 반대 — 휴무는 길이 무관 하드 차단** (2026-07-13). 플래그(booking_yn 등)·스케줄·rule이 다 정상이어도 해당 날짜에 holiday row 있으면 노출 0. 운영이 파견/별동대를 **매일 full-day 휴무 bulk INSERT**로 마킹하는 패턴이 있으니(같은 created_at·memo 예 "정비별동대") 미노출 진단 시 `memo` 확인 필수.
 
@@ -516,7 +535,8 @@ first_sub_reservations AS (
 **재배정을 직접 실행할 때 — 대상 사전검증 필수 (2026-07-24)**
 - 재배정 API(sales-admin `PUT /careplus/reservations-admin/{id}/schedule`, zero-api admin `PATCH`)는 대상 디테일러의 **근무시간·휴무·현직/퇴사를 전혀 검증 안 함** (`checkScheduleConflict`=같은 디테일러 동일시각 겹침만, `skipConflictCheckYn=true`면 그마저 스킵). 검증은 고객 슬롯조회 경로(`findActiveDetailers`)에만 있음 → **API 성공 ≠ 실제 가용.**
 - ⟹ 재배정 대상을 고를 땐 아래를 **직접** 걸 것: ①Active 4조건(§3a: `booking_yn=1·retired_yn=0·deleted_yn=0·direct_yn=1`) ②출장 재배정이면 `supply_sheet.region <> '오토랩'`(고정샵은 필드 안 돎) ③대상 시각이 `detailer_holiday`(부분휴무 포함, from~to 둘 다 UTC 직접비교) 안에 없음 ④그 시각 겹치는 CONFIRMED 예약 없음 ⑤더미 `132/125/168` 제외.
-- 현직 판별: `supply_sheet.status='현직'`이 정본(퇴사/하차/삭제/교육중 제외). ⚠️ `detailer.retired_yn`은 미신뢰 — 실제 퇴사자도 0인 경우 있음(주진우147, retired_yn=0인데 booking_yn=0·supply_sheet 퇴사). `booking_yn=0`이 실질 비활성 시그널. supply_sheet 조인=phone `REPLACE(phone,'-','') COLLATE utf8mb4_general_ci`, `status IS NULL`=로스터 누락(퇴사 아님, 확인 필요).
+- ⚠️ **실제 테이블명은 `detailer_supply_sheet`** (문서·구두로 "supply_sheet"라 부르지만 `SHOW TABLES LIKE '%supply%'`엔 `detailer_supply_sheet`·`detailer_supply_load_log`·`detailer_supply_weekly_snapshot`뿐). 유용 컬럼: `name`·`status`·`cell_name`(셀장)·`region`(Z번호)·`phone_norm`·**`home_address`(자택, 디테일러 출퇴근 동선 판단용)**·`car_plate`·`work_start_date`. ⚠️ `name`·`phone_norm` 비교 시에도 **`COLLATE utf8mb4_general_ci` 양쪽에 붙일 것** — 안 붙이면 `Illegal mix of collations`로 죽는다.
+- 현직 판별: `detailer_supply_sheet.status='현직'`이 정본(퇴사/하차/삭제/교육중 제외). ⚠️ `detailer.retired_yn`은 미신뢰 — 실제 퇴사자도 0인 경우 있음(주진우147, retired_yn=0인데 booking_yn=0·supply_sheet 퇴사). `booking_yn=0`이 실질 비활성 시그널. supply_sheet 조인=phone `REPLACE(phone,'-','') COLLATE utf8mb4_general_ci`, `status IS NULL`=로스터 누락(퇴사 아님, 확인 필요).
 - ⚠️ **반얀 파견 예외**: 반얀 파견 디테일러(`detailer_work_schedule.type LIKE 'BANYAN%'`, 예 `BANYAN_TREE_EXTENDED`)는 정상근무 차단용 **종일 휴무**가 걸려도 그날 배정된 **반얀 예약(장충단로 60)은 본인 담당** → 휴무충돌 감사·재배정 대상에서 제외(2026-07-24 이형준161 사례).
 
 **주말 데이터 주의**
@@ -750,6 +770,8 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - **컬럼 의미**: 수신자=`customer_id`(→`app_user.id`, ⚠️ `user_id` 아님), 발송시각=`created_at`(UTC), 채널=`lms_type`(`ALIMTALK`/`PUSH`/`MMS`/`SMS`/`LMS`), 캠페인 식별=`type`(varchar 200, 예 `reservationGuide002`·`firstWash_expire`), 발송상태=`status`(기본 `REQUESTED`).
 - ⚠️ **`sent_yn` 함정**: **ALIMTALK은 발송돼도 `sent_yn=0`·`status='REQUESTED'` 고정**(PUSH만 `sent_yn=1`). `sent_yn=1`로 필터하면 알림톡이 통째 누락된다. **행 존재 = 발송요청**으로 집계(도달 확정 아님 — BizM 도달 콜백 미반영).
 - 채널은 `type`별로 대체로 고정(윈백·구독갱신·자동예약=ALIMTALK, 쿠폰만료는 알림톡/푸시가 별도 `type`).
+- 🔴 **`reservation_id`는 대체로 NULL이다 — 예약 통지 이력을 `reservation_id`로 찾으면 "안 나갔다"는 오답이 나온다** (2026-07-26 실측: 당일 `reservationUpcoming003` **216건 전부 NULL**). **예약 통지 조회 = `WHERE customer_id = :app_user_id AND created_at >= :당일`** 로. `reservation_id`가 채워지는 type도 일부 있으니(`RESERVATION_INFO_DETAILER` 등) 둘 다 확인.
+- **D-1 예약확인 알림톡 `reservationUpcoming003` = 매일 09:00 KST 발송, 본문에 담당 디테일러 실명이 들어간다** (`message.message` JSON → `request.msg`: "안녕하세요 고객님, 내일 세차를 담당할 **{디테일러명}**입니다…" + 예약시간·방문장소). ⟹ **재배정 판단 시 "고객이 이미 이 이름을 봤는가"의 판정 근거**(§3c 항목 6). 본문 확인은 `SUBSTRING(m.message,1,150)`으로 충분.
 - **CRM 7일 예약전환 측정**: received(테스터 제외 live_users §5b) → 발송 후 7일 내 `reservation` 생성(`r.user_id = m.customer_id`, `r.created_at` 기준, `r.deleted_yn=0`. raw·비인과). `(customer_id, type)`별 첫 발송 dedup. 상세·재현쿼리 = caramel-api `docs/superpowers/specs/2026-06-30-crm-kill-keep-map.md` §2/§6.
 
 ### 6h. 050 안심번호/통화 (`telephony_call_log`·`customer_vno`) (2026-07-16)
