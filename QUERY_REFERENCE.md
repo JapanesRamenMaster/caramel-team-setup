@@ -362,7 +362,8 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
 
 **⚠️ 예외 2: `reservation.created_at`/`modified_at`은 KST 저장 (2026-07-12 실측)**
 - 같은 행에서 `reservation_datetime`은 UTC인데 `created_at`/`modified_at`은 **KST 벽시계** (MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST, 앱이 직접 쓰는 datetime=UTC — 컬럼마다 다름). CONVERT_TZ 하면 9h 틀어짐. `DATE_FORMAT`으로 뽑은 문자열이 곧 KST.
-- **디테일러 재배정 역추적 시그니처**: 재배정은 이력 테이블이 없다(`reservation_change_log`에 안 남음). `modified_at`이 **`17:00:00` 정각 = 셔플 크론(매일 17시 KST)이 detailer_id 변경**한 것, 정각 아닌 17시대(예 17:51) = 사람이 어드민에서 재배정했을 개연성. 사실상 유일한 역추적 수단 (2026-07-13 임세혁 셔플 진단 실사례).
+- **디테일러 재배정 역추적 시그니처**: 재배정은 이력 테이블이 없다(`reservation_change_log`에 안 남음). `modified_at`이 **17:00분대 = 셔플 크론(매일 17시 KST)이 detailer_id 변경**한 것, 17시대 후반(예 17:51) = 사람이 어드민에서 재배정했을 개연성. 사실상 유일한 역추적 수단 (2026-07-13 임세혁 셔플 진단 실사례).
+  - 🔴 **초는 `00`이 아니다 — `TIME(modified_at)='17:00:00'` 등호 필터는 0건이 나온다 (2026-07-26 실측).** 배치가 17:00:00에 시작해 수 초간 쓰므로 실제 저장값은 `17:00:14` 같은 형태다. **판별은 `HOUR(modified_at)=17 AND MINUTE(modified_at)=0`.** "정각"이라는 표현에 낚여 초까지 등호 비교하면 "셔플이 안 돌고 있다"고 오판한다 — 실제로는 매일 돌고 있다(7/23~26 각 12·27·50·93건 변경).
 
 **⚠️ mysql-query.sh DATETIME 렌더링 함정 (쓰기 작업 시 치명적)**
 - DATETIME 컬럼을 그냥 SELECT하면 `...Z` ISO로 보이지만 **실제 저장값이 아니라 저장값−9h** (드라이버가 naive 값을 KST 로컬로 해석해 UTC ISO로 직렬화).
@@ -538,6 +539,8 @@ first_sub_reservations AS (
 - ⚠️ **실제 테이블명은 `detailer_supply_sheet`** (문서·구두로 "supply_sheet"라 부르지만 `SHOW TABLES LIKE '%supply%'`엔 `detailer_supply_sheet`·`detailer_supply_load_log`·`detailer_supply_weekly_snapshot`뿐). 유용 컬럼: `name`·`status`·`cell_name`(셀장)·`region`(Z번호)·`phone_norm`·**`home_address`(자택, 디테일러 출퇴근 동선 판단용)**·`car_plate`·`work_start_date`. ⚠️ `name`·`phone_norm` 비교 시에도 **`COLLATE utf8mb4_general_ci` 양쪽에 붙일 것** — 안 붙이면 `Illegal mix of collations`로 죽는다.
 - 현직 판별: `detailer_supply_sheet.status='현직'`이 정본(퇴사/하차/삭제/교육중 제외). ⚠️ `detailer.retired_yn`은 미신뢰 — 실제 퇴사자도 0인 경우 있음(주진우147, retired_yn=0인데 booking_yn=0·supply_sheet 퇴사). `booking_yn=0`이 실질 비활성 시그널. supply_sheet 조인=phone `REPLACE(phone,'-','') COLLATE utf8mb4_general_ci`, `status IS NULL`=로스터 누락(퇴사 아님, 확인 필요).
 - ⚠️ **반얀 파견 예외**: 반얀 파견 디테일러(`detailer_work_schedule.type LIKE 'BANYAN%'`, 예 `BANYAN_TREE_EXTENDED`)는 정상근무 차단용 **종일 휴무**가 걸려도 그날 배정된 **반얀 예약(장충단로 60)은 본인 담당** → 휴무충돌 감사·재배정 대상에서 제외(2026-07-24 이형준161 사례).
+- ⚠️ **반얀 예약 매칭은 `LIKE '%장충단로 60%'` 금지** — '장충단로 600'·'장충단로 60길'을 오탐한다. **`location REGEXP '장충단로 ?60($|[^0-9길])'`** 를 쓸 것(공백 없는 '장충단로60'까지 커버, caramel-zero `isBanyanAddress` 정규식과 같은 기준). ⚠️ 파이썬 `mysql.connector`로 실행할 때 `%`가 들어가면 이스케이프 함정이 있으니 REGEXP가 안전하다.
+- ⚠️ **"이 예약이 셔플(17시 동선 재배정) 대상인가"는 DB 컬럼만으로 판정할 수 없다 (2026-07-26 확정).** `reservation.allow_shuffle_yn`(DEFAULT 1)은 *옮겨지는 예약* 쪽만 막는다 — 코드의 move 로직은 **받는 디테일러를 보지 않는다**(swap은 양쪽 예약을 본다). 즉 `allow_shuffle_yn=0`으로도 "그 디테일러에게 다른 예약이 들어오는 것"은 못 막는다(실사례: 2026-07-24 셔플이 을지로 예약 81101을 반얀 파견조 정순욱187에 배정). 반대로 반얀 예약은 **주소 문자열 게이트**(`user_address`의 address+building_name+jibun_address에 '반얀트리'/'장충단로 60'/'장충동2가 201' 포함 여부)로 이미 이동이 막혀 있어 `allow_shuffle_yn=1`이어도 안 옮겨진다. → 셔플 영향 판정은 반드시 코드 게이트(`libs/route-optimization`)를 함께 확인.
 
 **주말 데이터 주의**
 - 주말 디테일러 2~3명 → fill rate 스윙이 큼
@@ -914,6 +917,11 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
 
 - ⚠️ **취소 반환 = soft-delete + 새 row 재발급** (기존 row는 `deleted_yn=1`·`reservation_id` 유지, 새 미사용 row 생성) → 상세 §5c.
+
+**⚠️ 무료/유료 판별에 쓰면 안 되는 컬럼 2개 (2026-07-26 실측)**
+- **`paid_amount`는 2026-05부터 채워지기 시작했다.** 2026-01~04 첫 세차 `user_service`는 **전부 0**이고, 5월 565건 중 443건·6월 670건 중 233건만 0이다. 시계열로 유·무료를 가르면 4월 이전이 통째로 "무료"가 되어 완전히 틀린다.
+- **`paid_yn`은 거의 항상 1이라 판별력이 없다** (첫 세차 기준 월별 99~100%). 무료 프로모션 세차도 1로 들어온다.
+- **권장 판별**: 결제 조인으로 판정한다 — `user_service.payment_id` → `payment`(`deleted_yn=0`, `status IN ('PAID','PARTIAL_CANCELED')`)의 `amount > 0`이면 유료, payment 없거나 `amount=0`이면 무료. 구독/1회권 구분은 `user_service.subscription_id` NULL 여부(§5d). 첫 결제 유형으로 가르는 대안은 first-touch `payment.type`(`SUBSCRIPTION`/`VOUCHER`/`PACKAGE`).
 
 **세차 내용(서비스명) 조회:**
 ```sql
