@@ -188,6 +188,12 @@ LEFT JOIN zone z ON ST_Contains(z.area,
 - `reservation`엔 `zone_id` 없음. `zone.area`는 polygon(SRID 0, 좌표 순서 **(lng lat)**)
 - 경로: reservation → COALESCE 좌표(§2e) → `ST_Contains(zone.area, POINT(lng lat))`
 - 어느 zone에도 안 들어가면 z가 NULL → 미커버/이탈 후보
+- ⚠️ **거리 계산도 SRID 0으로 통일할 것.** `ST_Distance_Sphere`에 SRID **4326**을 쓰면 `Latitude out of range` 에러로 죽는다(4326은 **위도-경도** 순서를 강제하는데 우리 좌표는 경도-위도). polygon과 축을 맞춰 **SRID 0 + `POINT(경도 위도)`**:
+  ```sql
+  ST_Distance_Sphere(ST_GeomFromText('POINT(127.0097435 37.5500494)',0),
+                     ST_GeomFromText(CONCAT('POINT(',lng,' ',lat,')'),0)) / 1000  -- km
+  ```
+- ⚠️ **zone 폴리곤이 아예 없는 구가 있다**(중구·광진·양천·동작·관악·종로 등). 그 주소는 최근접 fallback으로 엉뚱한 zone에 떨어진다(예: 중구 신당동 → Z9). **"존 외"로 잡힌 건이 실은 폴리곤 공백 산물일 수 있으니, 존 일치를 목표로 삼기 전에 실거리부터 볼 것.**
 
 ### 2g. source_type 능동/자동 구분
 
@@ -268,6 +274,41 @@ JOIN zone z ON z.id = r.zone_id     -- ⚠️ service_zone 테이블 없음 — 
 | 11 | Z14 (경기 용인시/경기 화성시) |
 | 12 | Z16 (강동구/송파구) |
 | 13 | Z17 (경기 고양시/경기 파주시) |
+
+### 3c. 재배정 후보 탐색 — "이 존 외 건, 누구로 바꿀 수 있나" (2026-07-26)
+
+§6b의 사전검증은 **이미 고른 대상을 검사**하는 절차다. 후보를 **찾는** 건 별개이고, 순서를 틀리면 "교체 불가"라는 오답이 나온다.
+
+1. **같은 zone 담당자로 1:1 교체는 대개 불가** — 그 zone·그 요일 rule 보유자를 전부 뽑아도 인기 시간대(14시 등)엔 전원 예약이 차 있다. **여기서 멈추지 말 것.**
+2. **존을 풀고 "그 시각 공백 × 목표주소 최단거리"로 확장**한다. 1위가 보통 압도적으로 가깝다(실사례 1.4km vs 2위 4.9km).
+```sql
+WITH sched AS (   -- 그 요일 근무자 (⚠️ rule은 schedule_id로 직접 필터 — §3b)
+  SELECT dws.detailer_id FROM detailer_work_schedule dws
+  JOIN detailer_work_schedule_rule r ON r.schedule_id = dws.id AND r.deleted_at IS NULL
+  WHERE dws.effective_from <= :date AND dws.effective_to > :date AND r.day_of_week = 'MON'
+),
+res AS (          -- 그날 전체 예약 (KST 하루 = UTC 전날15:00 ~ 당일15:00)
+  SELECT r.detailer_id, DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%H:%i') kst,
+         r.location, COALESCE(r.longitude,ua.longitude) lng, COALESCE(r.latitude,ua.latitude) lat
+  FROM reservation r LEFT JOIN user_address ua ON ua.id = r.address_id
+  WHERE r.reservation_datetime >= :utc_from AND r.reservation_datetime < :utc_to
+    AND r.status NOT IN ('CANCELED','CREATED')
+)
+SELECT s.detailer_id, d.name,
+       ROUND(MIN(ST_Distance_Sphere(ST_GeomFromText('POINT(:lng :lat)',0),
+              ST_GeomFromText(CONCAT('POINT(',x.lng,' ',x.lat,')'),0)))/1000,1) AS min_km
+FROM sched s
+JOIN detailer d ON d.id = s.detailer_id
+  AND d.booking_yn=1 AND d.direct_yn=1 AND d.retired_yn=0 AND d.deleted_yn=0   -- §3a
+LEFT JOIN res x ON x.detailer_id = s.detailer_id
+WHERE NOT EXISTS (SELECT 1 FROM res y WHERE y.detailer_id=s.detailer_id AND y.kst=:target_hhmm)
+  AND NOT EXISTS (SELECT 1 FROM detailer_holiday h WHERE h.detailer_id=s.detailer_id
+                    AND h.from <> h.to AND h.from < :kst_day_end_utc AND h.to > :kst_day_start_utc)
+GROUP BY s.detailer_id, d.name ORDER BY min_km;
+```
+3. **채택 판단은 거리가 아니라 "동선 사이에 끼는가"** — 후보의 직전/직후 예약 시각·좌표를 뽑아 삽입 가능한지 본다(+ 하루 5건 캡). 목표가 기존 동선 한복판에 떨어지는 후보가 정답.
+4. ⚠️ `detailer_holiday`는 **UTC 저장**이라 "그날 휴무" 판정 윈도우는 `from < 'X일 14:59:59' AND to > '(X-1)일 15:00:00'`. `from <> to` 필터도 같이(§6b 무력화 row). 그래도 예약이 있는 사람이 휴무로 잡히는 경우가 있으니 **route와 교차확인**.
+5. 실행 전 §6b "재배정 대상 사전검증"을 반드시 통과시키고, 실행은 재배정 API로(DB 직접 UPDATE 금지). `skipConflictCheckYn=false`로 두면 TMap 실이동시간 기반 충돌체크가 돌아 삽입 타당성을 한 번 더 걸러준다.
 
 ---
 
@@ -687,6 +728,16 @@ BEFORE/AFTER 섹션 종류:
   3. `cart_item` → `cart` → `payment` → `payment.metadata` JSON_TABLE로 실결제 항목 추출
   4. 포인트 차감: 비례 배분 (`item_price / total_price * point_amount`)
   5. 최종: `sale_price = base_price - point_alloc`
+- **직접 짜지 말 것 — 완성본이 있다: `~/claude/scripts/tmp_mar_revenue.sql`.** 위 5단계가 전부 구현돼 있다. 날짜 리터럴(`'2026-03-01' AND '2026-03-31'`) 두 군데만 바꿔 실행하면 `wash_count / total_revenue / avg_revenue_per_wash`가 나온다.
+- ⚠️ **`reservation_revenue`는 테이블이 아니다** — 위 SQL 안의 마지막 CTE 이름이다. `JOIN reservation_revenue`를 쓰면 실행 자체가 실패한다. (2026-07-26 실사례: 테이블로 착각해 "매출 산출 불가"로 오판 후 근사치로 대체함)
+- ⚠️ **`cbr_daily_revenue_snapshot.total_revenue`를 보고용 매출로 쓰지 말 것** — 실제 대비 **25~30% 과소**. (2026년 5월: 스냅샷 1.36억 vs 실제 1.80억) 빠른 감만 볼 때 외 금지.
+- 검증 기준: 위 SQL 재현값 vs `Caramel_monthly(A)` 시트 확정값 오차는 **+0.4~0.6%가 정상**(2026년 3·4월 실측). 이 범위를 넘으면 필터를 의심할 것.
+
+**헤이딜러(외부공급) 세차 — `manual_wash_adjustment`**
+- `reservation`에 안 잡힌다. 별도 테이블 `manual_wash_adjustment`의 `SUM(count)`, 날짜 컬럼은 `wash_date`(KST 저장, 변환 불필요).
+- ⚠️ **`memo='헤이딜러'`만 필터하면 누락** — `memo='조준호'`도 외부공급이다. **둘 다 합산**(전체 합산이 맞다). 2026년 월평균 조준호분 ~100건.
+- 매출 환산은 `건수 × 8.80만원`(고정 가정, (A)시트 헤이딜러 객단가와 동일). 위 세차 매출 SQL엔 포함되지 않으므로 따로 더할 것.
+- 마감 후 retro 입력으로 과거 월 수치가 ±25건 움직일 수 있다 — 이전 마감값과 다르면 정상.
 
 **구독 갱신 결제액이 매달 다른 이유 — `payment.metadata.prices`로 추적**
 - 같은 구독인데 결제액이 월마다 변동(예: 111k~124k)하면 프로모션 할인. `metadata.prices[]`의 `originalPrice`(정가) vs `price`(실결제) 차이 + `promotionApplicationId` 존재 여부로 판별.
