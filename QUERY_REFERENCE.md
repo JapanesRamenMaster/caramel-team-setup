@@ -755,6 +755,32 @@ BEFORE/AFTER 섹션 종류:
 - ⚠️ **`reservation_revenue`는 테이블이 아니다** — 위 SQL 안의 마지막 CTE 이름이다. `JOIN reservation_revenue`를 쓰면 실행 자체가 실패한다. (2026-07-26 실사례: 테이블로 착각해 "매출 산출 불가"로 오판 후 근사치로 대체함)
 - ⚠️ **`cbr_daily_revenue_snapshot.total_revenue`를 보고용 매출로 쓰지 말 것** — 실제 대비 **25~30% 과소**. (2026년 5월: 스냅샷 1.36억 vs 실제 1.80억) 빠른 감만 볼 때 외 금지.
 - 검증 기준: 위 SQL 재현값 vs `Caramel_monthly(A)` 시트 확정값 오차는 **+0.4~0.6%가 정상**(2026년 3·4월 실측). 이 범위를 넘으면 필터를 의심할 것.
+- ⚠️ **후불(현장수금) 예약은 이 매출 SQL에서 통째로 0원이다.** CTE가 `IF(us.payment_id IS NULL, 0, …)`라 payment가 없는 후불 예약은 금액이 0으로 깔린다. 후불을 포함한 매출을 내려면 `reservation_onsite_collection` 수금액(§ 해당 섹션 공식)을 **세차일(`reservation.reservation_datetime`) 기준으로 별도 가산**해야 한다. (2026-07-27 CBR v2 실측: 7/20주 타겟 매출 1,477만 → 후불 8건 74.7만 누락 = -5.1%)
+- ⚠️ **제휴처 오프라인 수금 매출은 DB 어느 매출 쿼리에도 안 잡힌다.** 두 패턴 모두 "결제 row를 봤으니 반영됐다"고 착각하기 쉬우니 `amount`가 아니라 **`amount − point`(현금)** 로 확인할 것:
+  - **현대백화점 팝업 패키지** = `payment` row는 **있다**. 다만 `metadata.syntheticPointPayment=true`·`source='COUPON_PACKAGE_REDEEM'`로 **amount 전액이 POINT**(`payment_medium` CASH=0, POINT=amount)라, `amount − point` 공식을 그대로 쓰면 **0원으로 상쇄**된다. (2026년 6~7월 PACKAGE amount 합 5,635만 vs 그 공식상 현금 654만) → **이 point는 고객 포인트 잔액이 아니라 제휴 정산용 합성값이므로 차감하면 안 된다.** 매출/GMV 집계 시 예외 처리할 것:
+    ```sql
+    -- 포인트 차감에서 COUPON_PACKAGE_REDEEM 제외 (CBR v2 #335/336 채택, 2026-07-27)
+    - IF(JSON_UNQUOTE(JSON_EXTRACT(p.metadata,'$.source')) = 'COUPON_PACKAGE_REDEEM', 0,
+         COALESCE((SELECT SUM(pm.amount) FROM payment_medium pm
+                   WHERE pm.payment_id = p.id AND pm.medium = 'POINT'),
+                  CAST(JSON_UNQUOTE(JSON_EXTRACT(p.metadata,'$.point')) AS SIGNED), 0))
+    ```
+    인식 시점 = `paid_at` = 쿠폰 등록/지급일(구매일 아님. 실제 현금은 제휴처가 받아 우리 PG를 안 거친다).
+  - **반얀트리 5·10회권** = `payment` row 자체가 없다(어드민/콜콘솔 grant + 계좌입금). `user_service`(service **137** '프리미엄 세차 패키지 올클린 케어')가 `product_id NULL·payment_id NULL·paid_amount 0`으로 지급되므로 **user_service엔 금액이 없다.** **금액 정본 = `crm_note.memo LIKE '%회권 지급 · 수금할 금액%'`** — grant 1tx가 남기는 로그에 금액이 박혀 있다(예: "반얀트리 프리미엄 세차 10회권 지급 · 수금할 금액 750,000원"). 5회권 400,000 / 10회권 750,000, 회차 구분은 memo 텍스트로만(`entitlement_package_instance.package_name`엔 회차수 없음). ⚠️`crm_note.created_at`은 UTC.
+  - **유효 판매 판정 4조건** (그냥 crm_note를 세면 과대집계된다):
+    ```sql
+    -- 반얀 회권 유효 판매/수금액 (2026-07-27 검증: 16건 11,650,000원 = 운영 수동집계 일치)
+    SELECT MIN(n.created_at) ts, n.user_id,
+           CAST(REPLACE(REGEXP_SUBSTR(n.memo,'[0-9,]+원'),',','') AS UNSIGNED) amt
+    FROM crm_note n JOIN live_users lu ON lu.id = n.user_id
+    WHERE n.memo LIKE '%회권 지급 · 수금할 금액%'
+      AND n.deleted_yn = 0                                    -- ① 취소된 note 제외
+      AND EXISTS (SELECT 1 FROM user_service us               -- ② 지급 세차권 생존 = 회수분 제외
+                  WHERE us.user_id = n.user_id AND us.service_id = 137 AND us.deleted_yn = 0)
+    GROUP BY n.user_id, DATE(DATE_ADD(n.created_at, INTERVAL 9 HOUR)),  -- ③ 오지급→재지급 중복제거
+             CAST(REPLACE(REGEXP_SUBSTR(n.memo,'[0-9,]+원'),',','') AS UNSIGNED);
+    -- ④ live_users(테스트 계정 제외) — 7/19 내부 테스트 배치 8명이 여기서 걸러진다
+    ```
 
 **헤이딜러(외부공급) 세차 — `manual_wash_adjustment`**
 - `reservation`에 안 잡힌다. 별도 테이블 `manual_wash_adjustment`의 `SUM(count)`, 날짜 컬럼은 `wash_date`(KST 저장, 변환 불필요).
@@ -964,6 +990,17 @@ SELECT roc.reservation_id, roc.status,
    WHERE i2.collection_id=roc.id AND i2.canceled_at IS NULL) AS amount_to_collect
 FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 ```
+- ⚠️ **`status`는 세차가 끝나도 `PENDING`에 머문다** — 수금완료 전이가 없다(2026-07-27 실측: 전체 49건이 PENDING/CANCELED 두 값뿐, WASHED 예약도 PENDING). "수금 완료" 필터를 걸면 전부 0건이 된다. `status <> 'CANCELED'`로만 거를 것.
+- **온보딩 상품 구매를 선불·후불 통틀어 세려면 `user_service.product_id`를 쓴다.** 후불도 온보딩 시점에 user_service가 product_id와 함께 생성되고 `payment_id`만 NULL이라, 결제 유무와 무관하게 한 소스로 잡힌다. `payment`/`cart`로 조회하면 후불 절반이 통째로 빠지고, `reservation_onsite_collection_item`으로 조회하면 취소분이 남는다(user_service는 `deleted_yn=0`으로 자동 정리됨).
+  ```sql
+  -- 온보딩 코스(라이트/베이직/장마 대비 풀코스) 일별 구매 고객수, 선불+후불 통합
+  SELECT DATE(DATE_ADD(us.created_at, INTERVAL 9 HOUR)) d, pr.name, COUNT(DISTINCT us.user_id)
+  FROM user_service us JOIN product pr ON pr.id = us.product_id
+  WHERE us.deleted_yn = 0 AND pr.type = 'VOUCHER'
+    AND (pr.name LIKE '라이트%' OR pr.name LIKE '베이직%' OR pr.name LIKE '장마%')
+  GROUP BY d, pr.name;
+  ```
+  ⚠️ 코스 상품은 **tier별로 product row가 7개씩** 따로 있다(2026-07-15 생성, id 4037~4057). `product_id IN (…)`로 특정 코스를 집으려 하지 말고 **이름으로 묶을 것**.
 
 ---
 

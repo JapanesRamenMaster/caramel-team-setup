@@ -573,6 +573,8 @@ point_used = COALESCE(
 ```
 - `payment.amount` = **CASH + POINT 합**(포인트 포함, 쿠폰 차감 후). 2025-09 이후엔 `SUM(payment_medium.amount) == payment.amount`.
 - **현금유입/GMV** = `amount − point_used − (부분취소면 cancel_amount)`. metadata.$.point는 전 기간 존재.
+- ⚠️ **`metadata.source='COUPON_PACKAGE_REDEEM'` 결제는 `syntheticPointPayment=true`로 amount 전액이 POINT** (payment_medium CASH=0). 제휴처 N회권 쿠폰을 앱에서 등록(redeem)할 때 회차별로 만들어지는 **기록용 결제**이고, 실제 현금은 제휴처가 오프라인으로 받아 우리 PG를 안 거친다 → 위 GMV 공식을 그대로 쓰면 **0원으로 상쇄**된다(2026-07-27 실측: 6~7월 PACKAGE amount 5,635만 vs 공식상 현금 654만). **이 point는 고객 포인트 잔액이 아니라 제휴 정산용 합성값이라 차감 대상이 아니다** → 매출/GMV 집계 시 `IF(source='COUPON_PACKAGE_REDEEM', 0, point_used)`로 예외 처리(CBR v2 #335/336 채택). 반대로 `SUM(amount)`만 보고 "이미 반영됐다"고 판단하는 것도 금지 — 어느 쪽인지 쿼리를 열어 확인할 것.
+- ⚠️ **후불(현장수금) 예약은 payment row가 아예 없다** — 매출/GMV에 넣으려면 `reservation_onsite_collection` 수금액을 세차일 기준으로 별도 가산. `user_service.postpaid_yn=1`은 후불이 아니라 **레거시 구독 후불권**(payment_id 있음)이니 혼동 금지.
 
 ---
 
