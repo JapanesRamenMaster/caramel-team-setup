@@ -122,6 +122,12 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 - FK 컬럼명은 **`car.model_id`** — `car_model_id`는 존재하지 않아 "Unknown column" 오류 발생.
 - 올바른 조인: `LEFT JOIN car_model cm ON c.model_id = cm.id`
 
+**차종 티어(T1~T7) 판정 — `car_model.tier_id` → `car_tier.tier`**
+- `car`에도 `car_model`에도 **티어 숫자 컬럼은 없다**. 정본은 `car_tier.tier`(int).
+- 전체 경로: `car c JOIN car_model cm ON c.model_id=cm.id JOIN car_tier ct ON cm.tier_id=ct.id` → `ct.tier`. 브랜드까지 붙이려면 `JOIN car_brand cb ON cm.brand_id=cb.id`.
+- ⚠️ **`product.product_type='TIER_1'~'TIER_7'`은 "이 상품이 몇 티어용인가"이지 "이 차가 몇 티어인가"가 아니다.** 차종 티어를 product에서 찾으면 헛다리 — 상품 가격표(1회권 정가 등)를 볼 때만 쓴다.
+- 티어는 차 크기·작업량 기준(출고가 아님 — 아래 타겟 판별 참조). 실측 예(2026-07): T4=GV70·GLC·X3·S클래스·911·XC60·파나메라·마칸 / T5=GV80·카이엔·X5·GLE·G클래스·레인지로버.
+
 **S·A 타겟(신차 출고가 6,500만↑) 판별 — `car_model_target` 뷰**
 - `JOIN car_model_target cmt ON cmt.id = c.model_id WHERE cmt.is_target = 1`
 - ❌ `car_brand.target_yn`(수입차 브랜드 21개 단위)은 부정확 — 제네시스 G90·GV80 누락 + BMW 1시리즈·벤츠 A클래스 오포함.
@@ -328,6 +334,7 @@ GROUP BY s.detailer_id, d.name ORDER BY min_km;
 - 🔴 **`reservation_datetime` 상한을 파견 `effective_to`로 반드시 걸어라.** 파견 **종료 후** 날짜는 복귀 DEFAULT 스케줄 구간이라 그 존 예약이 정상이다. 상한 없이 세면 복귀 구간 예약(한수용 9월 8건, 구독 자동예약 `created_at` 03:0x)을 "누수"로 오판한다.
 - 구독 자동예약이 몇 주 앞을 미리 깔아두므로(§6b) 파견 결정 시점엔 이미 한 달 반 뒤까지 채워져 있다 = tail은 항상 크다.
 - ⚠️ **배정 당시엔 존 외가 아니었을 수 있다** — 판정은 "지금 스케줄"이 아니라 **예약 생성 시점의 effective 스케줄**(`effective_from <= 생성시점 < effective_to`)로. 지금 기준으로 존 외라고 오배정 선언하지 말 것.
+- 🔴 **잔존 예약은 "원존 예약"만이 아니다 — 같은 장소 안에서 근무창을 쪼개도 발생한다 (2026-07-27 실측).** 한 장소를 오전/오후 2교대로 분할하면 **분할 전 생성된 그 장소 예약이 교대창 밖으로 떨어진다.** 실사례: 반얀 09·10·11시 예약 4건이 오후조(KST 14~21)인 이형준161·임사명193·박현규207에 잔존 — created 7/13~7/15로 2교대 편성(7/19) 전이고, 당시엔 기본 `BANYAN_TREE` 그리드(09·11시)가 열려 있었다. ⟹ **근무창 감사에 "장소가 맞는 건"도 반드시 포함할 것.** 장소 필터(`location` 불일치)만으로 잔존을 찾으면 이 유형이 통째로 안 보인다.
 
 ---
 
@@ -362,7 +369,11 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
 
 **⚠️ 예외 2: `reservation.created_at`/`modified_at`은 KST 저장 (2026-07-12 실측)**
 - 같은 행에서 `reservation_datetime`은 UTC인데 `created_at`/`modified_at`은 **KST 벽시계** (MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST, 앱이 직접 쓰는 datetime=UTC — 컬럼마다 다름). CONVERT_TZ 하면 9h 틀어짐. `DATE_FORMAT`으로 뽑은 문자열이 곧 KST.
-- **디테일러 재배정 역추적 시그니처**: 재배정은 이력 테이블이 없다(`reservation_change_log`에 안 남음). `modified_at`이 **17:00분대 = 셔플 크론(매일 17시 KST)이 detailer_id 변경**한 것, 17시대 후반(예 17:51) = 사람이 어드민에서 재배정했을 개연성. 사실상 유일한 역추적 수단 (2026-07-13 임세혁 셔플 진단 실사례).
+- **디테일러 재배정 역추적 시그니처**: 재배정 전용 이력 테이블/로그 type은 없다. `modified_at`이 **17:00분대 = 셔플 크론(매일 17시 KST)이 detailer_id 변경**한 것, 17시대 후반(예 17:51) = 사람이 어드민에서 재배정했을 개연성 (2026-07-13 임세혁 셔플 진단 실사례).
+  - 🔴 **단 "change_log엔 아예 안 남는다"는 반쪽 진술이다 — 두 경로를 함께 봐야 한다 (2026-07-27 예약 #79702 실측 교정).**
+    - **고객이 날짜를 바꾸면서 디테일러도 바뀐 경우는 남는다**: `RESERVATION_DATETIME_CHANGED` row의 `data` JSON에 `fromDetailerId`/`toDetailerId`가 같이 실린다(#79702: 고객이 7/27→7/28 변경하며 78 이승제→88 강지성). **재배정 전용 `data.type`이 없어서 datetime 로그 안에 숨어 있다** — `data.type`으로 재배정을 찾으면 못 찾는다. `WHERE JSON_EXTRACT(data,'$.toDetailerId') IS NOT NULL`로 잡을 것.
+    - **셔플 크론·어드민 단독 재배정은 안 남는다**: 같은 #79702가 다음날 17:00 셔플로 88→78 되돌아왔는데 change_log엔 row 0건. 이건 `modified_at`으로만 추적된다.
+    - ⟹ change_log만 보면 셔플 이동을 놓치고, `modified_at`만 보면 고객 변경분의 before/after 디테일러를 잃는다. **"재배정 이력" 질문엔 항상 두 쿼리를 돌릴 것.**
   - 🔴 **초는 `00`이 아니다 — `TIME(modified_at)='17:00:00'` 등호 필터는 0건이 나온다 (2026-07-26 실측).** 배치가 17:00:00에 시작해 수 초간 쓰므로 실제 저장값은 `17:00:14` 같은 형태다. **판별은 `HOUR(modified_at)=17 AND MINUTE(modified_at)=0`.** "정각"이라는 표현에 낚여 초까지 등호 비교하면 "셔플이 안 돌고 있다"고 오판한다 — 실제로는 매일 돌고 있다(7/23~26 각 12·27·50·93건 변경).
 
 **⚠️ mysql-query.sh DATETIME 렌더링 함정 (쓰기 작업 시 치명적)**
@@ -506,6 +517,13 @@ first_sub_reservations AS (
 - 코드 lookup은 `dayjs(date).startOf('day')`(UTC 자정)와 `effective_from <= date <= effective_to` 비교 + 해당 요일 rule 매칭.
 - 노출 시뮬레이션: `effective_from <= 'D일 00:00:00' AND effective_to >= 'D일 00:00:00'` + `day_of_week` + `zone_id` 조건으로 SQL 재현 가능.
 
+**🔴 디테일러 일부하 비교는 건수만으로 하면 틀린다 — 개인 근무창을 반드시 함께 조인 (2026-07-27 이승제 6건 항의 실사례)**
+- 표준 근무창은 rule `01:00:00~10:00:00` UTC(=**KST 10~19**)지만 **이른 조 `23:00:00~08:00:00`(=KST 08~17)가 여럿 있다** — 실측 명단: 이한결(177)·이승제(78)·이재형b(167)·황석찬(114). "이한결만 예외"로 알고 있으면 틀린다.
+- **이른 조는 18시 이후를 못 받아 같은 건수가 더 짧은 창에 압축된다.** 실측 6건 배정 비교(2026-07-28): 10~19조는 `10·12·14·16·17·18`로 9시간에 퍼지지만 이른 조는 `08·10·11·12·14·16`으로 오전에 4건이 붙고 마지막 건 종료가 근무 종료(17시)에 딱 붙는다. (DEFAULT 슬롯 시각 상수 자체는 여전히 미조사 — 위 슬롯 섹션 경고 참조. 위 시각들은 배정 실측값이지 그리드 단정이 아니다.)
+- ⟹ 부하 랭킹 쿼리에 `SUM(estimated_time)` + rule 윈도우(`DATE_FORMAT(wr.start_time,'%H:%i')`)를 함께 뽑을 것. 건수만 세면 이른 조 과부하가 안 보인다(실사례: 6건 이상 5명 중 이른 조가 2명이었고, 건수·총소요분으로는 이승제가 오히려 최하위였다).
+- 근무창 밖 건을 "동선 좋으니 소화 가능"으로 임의 판단 금지 — 수락 여부는 디테일러별로 다르다(§6b 재배정 사전검증 참조).
+- ⚠️ **파견 상주자는 파견기간에 `type='DEFAULT'` 스케줄이 0행일 수 있다 (2026-07-27 반얀 상주 6명 전원 확인).** 즉 그 기간의 근무시간 = 파견 근무창이 유일하다. DEFAULT로 근무창을 찾아 0행이 나오면 "판정 불가"가 아니라 **파견 스케줄(`type LIKE 'BANYAN_TREE%'` 등)을 볼 신호**다. 근무외 판정 전에 그 사람이 그 주에 가진 스케줄 `type`을 먼저 전부 뽑을 것.
+
 **신규/복귀 디테일러 스케줄 생성 (활성 스케줄 0건인 경우)**
 - rule만으로는 안 되고 `detailer_work_schedule` 헤더부터 INSERT 필요.
 - 최근 운영 컨벤션: `slot_id = NULL`, `type = 'DEFAULT'`, description에 사유 메모.
@@ -541,6 +559,7 @@ first_sub_reservations AS (
 - ⚠️ **반얀 파견 예외**: 반얀 파견 디테일러(`detailer_work_schedule.type LIKE 'BANYAN%'`, 예 `BANYAN_TREE_EXTENDED`)는 정상근무 차단용 **종일 휴무**가 걸려도 그날 배정된 **반얀 예약(장충단로 60)은 본인 담당** → 휴무충돌 감사·재배정 대상에서 제외(2026-07-24 이형준161 사례).
 - ⚠️ **반얀 예약 매칭은 `LIKE '%장충단로 60%'` 금지** — '장충단로 600'·'장충단로 60길'을 오탐한다. **`location REGEXP '장충단로 ?60($|[^0-9길])'`** 를 쓸 것(공백 없는 '장충단로60'까지 커버, caramel-zero `isBanyanAddress` 정규식과 같은 기준). ⚠️ 파이썬 `mysql.connector`로 실행할 때 `%`가 들어가면 이스케이프 함정이 있으니 REGEXP가 안전하다.
 - ⚠️ **"이 예약이 셔플(17시 동선 재배정) 대상인가"는 DB 컬럼만으로 판정할 수 없다 (2026-07-26 확정).** `reservation.allow_shuffle_yn`(DEFAULT 1)은 *옮겨지는 예약* 쪽만 막는다 — 코드의 move 로직은 **받는 디테일러를 보지 않는다**(swap은 양쪽 예약을 본다). 즉 `allow_shuffle_yn=0`으로도 "그 디테일러에게 다른 예약이 들어오는 것"은 못 막는다(실사례: 2026-07-24 셔플이 을지로 예약 81101을 반얀 파견조 정순욱187에 배정). 반대로 반얀 예약은 **주소 문자열 게이트**(`user_address`의 address+building_name+jibun_address에 '반얀트리'/'장충단로 60'/'장충동2가 201' 포함 여부)로 이미 이동이 막혀 있어 `allow_shuffle_yn=1`이어도 안 옮겨진다. → 셔플 영향 판정은 반드시 코드 게이트(`libs/route-optimization`)를 함께 확인.
+  - 🔴 **이 누수는 진행형이다 — 1회성 청소로 끝나지 않는다 (2026-07-27 재발 실측).** 같은 패턴이 7/27 17:00:22에도 발생(#87098 반얀 16시 → 오전조 08~16인 정순욱187 = 근무 종료 경계 초과). 파견기간 중엔 **매일 17시 이후 새 위반이 생길 수 있으므로 주기 점검**이 필요하다(파견 tail 일괄 재배정과 별개 처방). 반얀 장소 예약도 안전하지 않다 — 장소 게이트는 이동을 막지만 **근무창은 아무도 안 본다.**
 
 **주말 데이터 주의**
 - 주말 디테일러 2~3명 → fill rate 스윙이 큼
@@ -631,8 +650,14 @@ SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
 - 금액 필드: `suggested_price`(매출액/고객 청구), `cost`(정산금액/원가), `delivery_fee`(탁송비)
 - 정비마진 = `suggested_price - cost - delivery_fee`
 
-**정산 완료일 = activity log 기준 + modified_at 폴백**
-- `crm_repair_order`에 정산완료일 컬럼이 없음. `modified_at` 단독은 메모 수정에도 갱신돼 부정확.
+**⚠️ 2026-07-27 정정: `crm_repair_order.paid_at` 컬럼이 생겼다 (아래 activity-log 서술은 그 이전 기준)**
+- `paid_at` 커버리지 = PAID 619건 중 **616건**. 아래 "정산완료일 컬럼이 없음"은 이제 사실이 아니다.
+- ⚠️ **단 두 소스가 크게 어긋난다**: 둘 다 있는 614건 중 **5분 내 일치 373건뿐, 148건은 1일 이상 차이**. 월 집계도 벌어진다(2026-04: `paid_at` 145만원 vs log+`modified_at` 폴백 335만원).
+- 어느 쪽이 "정산완료일" 정본인지 **미확인**(paid_at=운영자 입력 실제 수금일 / log=UI 상태변경 시각으로 추정). 매출 집계에 쓰기 전 제품·경영지원에 확인할 것. 어느 쪽을 쓰든 **기간 비교 시 한쪽으로 통일**.
+- ⚠️ **투자자 레터의 정비 매출은 이 테이블로 재현되지 않는다** — '26년 1Q 레터(1월 699·2월 1,236·3월 1,448만원)는 `paid_at`·`created_at`·마진 어느 조합과도 불일치. 회계 자체기장 출처로 추정. 상세 = memory `reference_wash_revenue_sources`.
+
+**정산 완료일 = activity log 기준 + modified_at 폴백** (paid_at 도입 이전 방식)
+- `modified_at` 단독은 메모 수정에도 갱신돼 부정확.
 - 정본 = `crm_activity_log`의 `activity_type='REPAIR_ORDER_STATUS_PAID'` 행 `created_at` (`MIN`).
 - 로그 커버리지 ~99% — 화면 플로우 안 거친 백엔트리는 로그 없음. INNER JOIN으로 짜면 통째 누락.
 - **`LEFT JOIN` 후 `COALESCE(MIN(log), modified_at)` 폴백:**
