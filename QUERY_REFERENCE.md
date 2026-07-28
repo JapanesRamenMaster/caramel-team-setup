@@ -54,11 +54,14 @@ reservation
 |------|------|
 | 세차 완료 | `status IN ('WASHED', 'REPORT_SENT')` |
 | 확정 예약(미완료) | `status = 'CONFIRMED'` |
-| 유효 예약 전체 | `status IN ('WASHED', 'REPORT_SENT', 'CONFIRMED')` |
+| 유효 예약 전체 | `status IN ('WASHED', 'REPORT_SENT', 'CONFIRMED', 'IN_PROGRESS')` |
+| 세차 진행중 | `status = 'IN_PROGRESS'` (디테일러가 세차 시작 후 완료 전) |
 | 취소 | `status = 'CANCELED'` (제외할 것) |
 | 미확정 | `status = 'CREATED'` (제외할 것) |
 
 ⚠️ `NOT IN ('CANCELED')` 사용 금지 — CREATED가 포함되어 데이터 왜곡됨.
+
+⚠️ **당일 예약 리스트(현장 배차표·주소별 예약 현황)에서 `IN_PROGRESS`를 빼먹지 말 것 (2026-07-28 실측).** `IN ('CONFIRMED','WASHED','REPORT_SENT')`로 조회하면 **그 순간 세차가 진행 중인 건이 리스트에서 사라진다** — 오전에 조회할 때마다 건수가 줄어드는 것처럼 보임(반얀트리 7/28 15건 중 3건이 IN_PROGRESS로 누락됐던 사례). 상태 전이는 `CONFIRMED → IN_PROGRESS → WASHED → REPORT_SENT`이므로 "지금 살아있는 예약"은 4개 상태를 모두 포함해야 한다.
 
 ⚠️ **`user_service` 경로로 예약을 붙일 때도 status 화이트리스트 필수** — 세차권에 CANCELED 예약이 연결된 채 남는 경우가 실제로 있어(취소 후 반납된 캠페인 세차권 등), status 필터 없는 LEFT JOIN은 취소·미확정 건을 유효 예약처럼 보이게 한다. 표준 패턴:
 ```sql
@@ -823,7 +826,10 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 |------|------|------|
 | id | int | PK |
 | plate_number | varchar(10) | 차량번호 |
-| model_year | int | 연식 (NULL 약 12%) |
+| model_year | int | 연식=제조/모델연도 (NULL 약 12%). ⚠️ 출고·등록일 아님 — 아래 주의 |
+| registered_at | datetime | **최초등록일** (커버 56%). 보증·차령 기산의 정본 |
+| final_registered_at | datetime | 최종소유자 이전일(중고 취득일). ⚠️ 보증 기산에 쓰지 말 것 |
+| manufacture_at | datetime | 제조일. 실측상 `registered_at`과 거의 동일 |
 | brand | varchar(15) | 브랜드명 **레거시 — 99% NULL. `brand_id` 사용** |
 | brand_id | int | FK → car_brand.id (name 컬럼으로 JOIN) |
 | model | varchar(100) | 모델명 레거시. `model_id` 우선 |
@@ -832,6 +838,14 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 | user_id | int | FK → app_user.id |
 | deleted_yn | tinyint | 0=정상 |
 | temp_yn | tinyint | 1=임시 차량 (필터 제거 권장) |
+
+⚠️ **보증만료·차령 판정에 `model_year`를 단독 기준으로 쓰지 말 것 (2026-07-28 실측).** `model_year`는 제조/모델연도라 실제 출고·등록 시점과 1년 이상 어긋난다(169더8221 model_year 2025 vs 최초등록 2024-11-14 / 257모8755 2022 vs 2021-08-25 / 166수8911 2024 vs 2025-04-29). 브랜드 보증기간을 연도에 더해 만료를 판정하면 결론이 뒤집힐 수 있다.
+
+```sql
+-- 보증 기산일: registered_at 우선, 없으면 model_year 폴백(이때는 "추정"임을 답변에 명시)
+COALESCE(c.registered_at, MAKEDATE(c.model_year, 1)) AS 보증기산일
+```
+`registered_at`이 NULL인 44%는 `car_wonbu_history`(plate_number 조인)의 `registered_at`으로 보강 가능. **`final_registered_at`은 중고 취득일이라 보증 기산에 쓰면 안 된다** — 57보8888은 최초등록 2013-06-03 vs 최종등록 2022-12-26으로 9년 차이.
 
 **국산차 브랜드 제외 패턴:**
 ```sql
