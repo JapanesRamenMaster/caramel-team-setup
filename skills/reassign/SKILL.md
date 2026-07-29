@@ -184,64 +184,104 @@ ORDER BY id DESC LIMIT 10;
 
 ⚠️ 각 단계에서 이름이 몇 개 나왔다고 멈추지 말 것. **3단계 검증에서 전원 탈락하면 다음 단계로 계속 넓힌다.** 검증을 통과한 후보가 하나도 없는데 "후보 없음"으로 끝내면 오답이다.
 
-### ① 그 시각에 그 동네를 도는 사람 (1순위 · 일반 예약만)
+🔴 **순위 기준은 딱 두 개다. ① 그 주소의 담당 존 → ② 그날 앞뒤 경로.** 반경(직선거리)과 최근 방문 구 분포는 **순위를 만드는 기준이 아니라** 존 내부가 고갈된 뒤 경로를 판정할 때 쓰는 보조 지표다. 거리만으로 줄 세우면 담당 존 사람을 제치고 남의 존 사람이 1순위로 올라온다.
 
-목표 주소 좌표(`:lng`, `:lat`)를 넣어 **그날 예약이 목표 주소 근처에 있는 사람**을 거리순으로 뽑는다. 담당 존으로 후보를 만들지 말 것 — 존과 무관하게 실제로 그 동네를 도는 사람이 잡혀야 한다.
+### ⓿ 예약 주소의 담당 존을 확정한다 — 모든 탐색의 출발점
+
+예약마다(주소마다) 먼저 존을 뽑는다. 4건이면 4건 다 뽑는다 — 같은 구라도 존이 갈릴 수 있다.
 
 ```sql
-SELECT d.id, d.name,
-       ROUND(MIN(ST_Distance_Sphere(POINT(:lng, :lat),
-              POINT(COALESCE(r.longitude, ua.longitude), COALESCE(r.latitude, ua.latitude))))/1000, 1) min_km,
-       COUNT(*) cnt,
-       GROUP_CONCAT(CONCAT(DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%H:%i'),
-              '/', r.estimated_time, 'm') ORDER BY r.reservation_datetime) day_plan
-FROM reservation r
-JOIN detailer d ON d.id = r.detailer_id
-LEFT JOIN user_address ua ON ua.id = r.address_id
-WHERE r.status = 'CONFIRMED' AND r.deleted_yn = 0
-  AND DATE(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00')) = ':date'
-  AND d.booking_yn = 1 AND d.deleted_yn = 0
-  AND d.id NOT IN (132, 125, 168, :did)
-  AND NOT EXISTS (                                    -- 반얀 파견자 제외 (일반 예약이므로)
-    SELECT 1 FROM detailer_work_schedule dws2
-    WHERE dws2.detailer_id = d.id AND dws2.type LIKE 'BANYAN_TREE%'
-      AND dws2.effective_from <= ':prev 15:00:00' AND dws2.effective_to > ':prev 15:00:00')
-GROUP BY d.id HAVING min_km <= 25 ORDER BY min_km;
+-- 포함하는 존 (SRID 0 + POINT(경도 위도) 순서 — 4326으로 쓰면 Latitude out of range)
+SELECT z.id zone_db_id, z.name
+FROM zone z
+WHERE z.area IS NOT NULL
+  AND ST_Contains(z.area, ST_GeomFromText('POINT(:lng :lat)', 0)) = 1;
+
+-- 위가 0건(폴리곤 공백, 전체 예약지의 ~12%)이면 최근접 존 = 시스템 fallback과 동일 기준
+SELECT z.id zone_db_id, z.name,
+       ROUND(ST_Distance(ST_ConvexHull(z.area), ST_GeomFromText('POINT(:lng :lat)',0)), 5) dist
+FROM zone z WHERE z.area IS NOT NULL ORDER BY dist LIMIT 3;
 ```
 
-`day_plan`이 그 사람의 그날 일정(시각/소요분)이다. **여기서 겹침을 직접 계산한다** — 목표 시각 앞 예약의 `시작 + 소요 + 이동시간`이 목표 시각을 넘으면 불가.
-⚠️ `day_plan`에 목표 시각 문자열이 없다고 "빈 슬롯"으로 읽지 말 것. 앞 예약이 소요 160분이면 12:00 예약이 14:40에 끝나 14:00을 이미 잡아먹고 있다.
+- ⚠️ **`zone.id`(DB PK) ≠ Z-번호(운영 명칭).** Z12=10, Z16=12, Z9=8, Z10=9, Z1=2, Z3=3, Z4=4, Z5=5, Z14=11, Z0=1. **쿼리는 `zone.id`로 하고 사람에게 말할 때는 `zone.name`을 그대로 인용**한다("zone_id 10"이 아니라 "Z12").
+- ⚠️ **존 이름의 행정구역 ≠ 폴리곤 커버리지.** Z16 폴리곤이 성남 중원·수정·하남 미사를 포함한다. 구 이름으로 존을 추측하지 말고 위 쿼리 결과만 쓴다.
+- 휴가자 본인의 담당 존도 같이 뽑아 둔다(아래 ① 쿼리에서 `:did`를 빼지 않고 한 번 돌리면 나온다). 예약 존과 본인 존이 다르면 그 예약은 애초에 존 외 배정이므로 후보 판단이 달라진다.
 
-### ② 그날 여유 있는 사람 (①에 없으면 / 반얀 예약이면 여기부터)
+### ① 같은 존 담당자 (1순위 · 일반 예약만)
+
+**그날 그 요일에 그 존을 담당하는 사람**을 전부 뽑는다. 존은 `detailer_work_schedule_rule.zone_id`가 정본이고 **날짜 단위로 바뀐다**(하루 파견이 흔하다) — 그래서 대상 날짜의 effective 스케줄로만 판정한다.
 
 ```sql
-SELECT d.id, d.name, dws.type, dwsr.zone_id,
-       DATE_FORMAT(DATE_ADD(dwsr.start_time, INTERVAL 9 HOUR),'%H:%i') w_start_kst,
-       DATE_FORMAT(DATE_ADD(dwsr.end_time,   INTERVAL 9 HOUR),'%H:%i') w_end_kst,
+SELECT d.id, d.name, dws.id sched, dws.type, MIN(dwsr.zone_id) zone_db_id,
+       DATE_FORMAT(DATE_ADD(MIN(dwsr.start_time), INTERVAL 9 HOUR),'%H:%i') w_start_kst,
+       DATE_FORMAT(DATE_ADD(MAX(dwsr.end_time),   INTERVAL 9 HOUR),'%H:%i') w_end_kst,
        (SELECT COUNT(*) FROM reservation r WHERE r.detailer_id = d.id AND r.status='CONFIRMED'
           AND r.deleted_yn = 0
           AND DATE(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00')) = ':date') cnt,
-       (SELECT COUNT(*) FROM detailer_holiday dh WHERE dh.detailer_id = d.id
-          AND dh.`from` <> dh.`to`
-          AND dh.`from` < ':date 15:00:00' AND dh.`to` > ':prev 15:00:00') holi
+       (SELECT GROUP_CONCAT(CONCAT(DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%H:%i'),
+               '/', r.estimated_time) ORDER BY r.reservation_datetime)
+          FROM reservation r WHERE r.detailer_id = d.id AND r.status='CONFIRMED' AND r.deleted_yn = 0
+          AND DATE(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00')) = ':date') day_plan,
+       (SELECT GROUP_CONCAT(CONCAT(DATE_FORMAT(DATE_ADD(dh.`from`, INTERVAL 9 HOUR),'%d %H:%i'), '~',
+               DATE_FORMAT(DATE_ADD(dh.`to`, INTERVAL 9 HOUR),'%d %H:%i'), ':', dh.memo) SEPARATOR ' | ')
+          FROM detailer_holiday dh WHERE dh.detailer_id = d.id AND dh.`from` <> dh.`to`
+          AND dh.`from` < ':date 15:00:00' AND dh.`to` > ':prev 15:00:00') holiday
 FROM detailer d
 JOIN detailer_work_schedule dws ON dws.detailer_id = d.id
   AND dws.effective_from <= ':prev 15:00:00' AND dws.effective_to > ':prev 15:00:00'
-JOIN detailer_work_schedule_rule dwsr ON dwsr.schedule_id = dws.id
+JOIN detailer_work_schedule_rule dwsr ON dwsr.schedule_id = dws.id      -- ⚠️ schedule_id 필터 필수
   AND dwsr.day_of_week = ':dow' AND dwsr.deleted_at IS NULL
-WHERE d.booking_yn = 1 AND d.deleted_yn = 0 AND d.id NOT IN (132, 125, 168, :did)
-ORDER BY cnt, d.id;
+  AND dwsr.zone_id = :zone_db_id                                        -- ⓿에서 나온 zone.id
+WHERE d.booking_yn = 1 AND d.deleted_yn = 0
+GROUP BY d.id, d.name, dws.id, dws.type ORDER BY cnt;
 ```
 
-이 결과에서 바로 읽어야 하는 것:
+- ⚠️ **`dwsr.schedule_id = dws.id` 조인을 빼면 남의 rule까지 섞여** 담당하지 않는 사람이 후보로 올라온다.
+- **존 담당자는 보통 3~5명뿐이다.** `day_plan`으로 목표 시각이 비었는지, `holiday`로 그 시각이 막혔는지, `w_start/end_kst`로 근무창에 들어오는지 본다(판정 방법은 3단계).
+- 존 담당자 중 **시각 유지로 가능한 사람이 있으면 거기서 끝난다.** 더 가까운 남의 존 사람이 있어도 그쪽으로 넘어가지 않는다.
+- 존 담당자가 그 시각 전원 만석/휴무면 **먼저 존 내부의 다른 빈 시각(③)을 본 다음** ②로 넘어간다 — 존 유지가 시각 유지보다 우선이다.
+- 반얀 예약이면 이 단계를 건너뛴다(장소 고정 → 1-5의 파견자 풀).
 
-- **`type`이 `BANYAN_TREE%`인 사람은 후보에서 제외** — 단 **일반 예약일 때만**. 반얀트리 파견자는 그 장소에 묶여 있어 밖에 아예 나갈 수 없다. 반대로 **대상이 반얀 예약이면 이 사람들만 후보**다(1-5 참조).
-- **`w_start_kst`가 08:00인 사람은 이른 조(08~17)라 18:00 예약을 받을 수 없다.** 표준은 10:00~19:00. 사람마다 다르므로 표준으로 가정하지 말 것.
-- **`holi > 0`이면 휴무 후보** — 전일인지 부분인지 쿼리 B를 그 사람에 대해 실행해 확인한다(부분 블록이면 다른 시각은 가능).
+### ② 그날 앞뒤 경로가 이어지는 사람 (2순위 · ①이 고갈된 뒤)
 
-### ③ 같은 날 다른 시각 (①②에 없으면)
+존 밖 사람을 볼 때의 기준은 반경이 아니라 **그날 동선에 이 건을 끼워 넣는 비용**이다. 후보의 **직전 예약 종료 위치 → 목표 주소 → 직후 예약 시작 위치**를 보고, 목표가 그 두 점 사이 경로에 얹히는지 판정한다.
 
-후보의 빈 시각마다 앞뒤 예약 좌표로 삽입 가능한지 보고 제시한다. 격자는 **일반 예약 08·10·12·14·16·18**, **반얀 예약은 1-5의 반얀 격자**를 쓴다. 고객에게는 **바꿔 두고 통보**한다(4·6단계).
+```sql
+-- 목표 시각(:hh) 기준 직전/직후 예약과 목표 주소 사이 거리·여유시간
+SELECT d.id, d.name, MIN(dwsr.zone_id) zone_db_id,
+       DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%H:%i') kst,
+       r.estimated_time est, r.location,
+       ROUND(ST_Distance_Sphere(POINT(:lng, :lat),
+             POINT(COALESCE(r.longitude, ua.longitude), COALESCE(r.latitude, ua.latitude)))/1000, 1) km_to_target
+FROM reservation r
+JOIN detailer d ON d.id = r.detailer_id
+JOIN detailer_work_schedule dws ON dws.detailer_id = d.id
+  AND dws.effective_from <= ':prev 15:00:00' AND dws.effective_to > ':prev 15:00:00' AND dws.type = 'DEFAULT'
+JOIN detailer_work_schedule_rule dwsr ON dwsr.schedule_id = dws.id
+  AND dwsr.day_of_week = ':dow' AND dwsr.deleted_at IS NULL
+LEFT JOIN user_address ua ON ua.id = r.address_id
+WHERE r.status = 'CONFIRMED' AND r.deleted_yn = 0
+  AND DATE(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00')) = ':date'
+  AND d.id IN (:cands)          -- 목표 시각이 빈 사람들만 넣는다
+ORDER BY d.id, r.reservation_datetime;
+```
+
+판정 순서:
+
+1. **직전 예약 종료(시작+소요) + 이동시간 ≤ 목표 시각**, **목표 종료 + 이동시간 ≤ 직후 예약 시각** — 둘 다 성립해야 후보다.
+2. 성립하는 사람끼리는 **detour(직전→목표→직후 합계 − 직전→직후 직선)가 작은 순**으로 줄 세운다. "목표 주소까지 최단거리"가 아니라 **끼워 넣어서 늘어나는 거리**가 기준이다.
+3. 목표가 그 사람 **하루 마지막 일정이 되면 자택까지 거리**를 detour에 더한다(3단계 ⑧).
+4. **한강을 건너는 삽입은 직선거리가 짧아도 뒤로 보낸다** — 다리 우회로 실이동이 30분+ 늘고 디테일러 불만 1순위다.
+5. 최근 1개월 방문 구 분포(3단계 ⑦)는 **순위 기준이 아니라 sanity check**다. detour가 작으면 이력 0건이어도 후보가 된다(그날 동선의 연장선이니까). 반대로 detour가 크면 이력이 많아도 후보가 아니다.
+
+⚠️ `day_plan`에 목표 시각 문자열이 없다고 "빈 슬롯"으로 읽지 말 것. 앞 예약이 소요 160분이면 12:00 예약이 14:40에 끝나 14:00을 이미 잡아먹고 있다.
+
+### ③ 같은 날 다른 시각 (①에 시각 유지 후보가 없으면 — ②보다 먼저 본다)
+
+**존 담당자의 빈 시각**을 먼저 긁는다. 격자는 **일반 예약 08·10·12·14·16·18**, **반얀 예약은 1-5의 반얀 격자**. 각 빈칸마다 ②의 앞뒤 경로 판정을 적용한다. 고객에게는 **바꿔 두고 통보**한다(4·6단계).
+
+- 존 담당자의 다른 시각 vs 존 밖 사람의 같은 시각 → **존 담당자의 다른 시각을 먼저 제시**한다(순서: ① → ③ 존 내부 → ② 존 밖 → ③ 존 밖 다른 시각 → ④).
+- ⚠️ **08:00 예약은 `w_start_kst`가 08:00인 사람만 받을 수 있다.** 표준은 10:00~19:00이고 08시 조는 소수라, 오전 이른 슬롯은 존 내부에서 후보가 0이 되는 일이 흔하다(실측: 강남권 08·10·12 슬롯 동시 전멸). 이때 시각 이동은 예외가 아니라 기본 경로다.
 
 ### ④ 다른 날짜 (③도 없으면)
 
@@ -275,10 +315,12 @@ ORDER BY r.reservation_datetime;
 | 4 | **그 시각 휴무 아님** | 쿼리 B를 그 후보에게 실행(`from <> to`). 부분 블록이면 **예약 구간 전체**가 휴무 구간과 겹치지 않는지 판정 |
 | 5 | **근무시간 안에 들어오는가** | `w_start_kst ≤ 예약 시각` **그리고** `예약 시각 + 소요시간 ≤ w_end_kst`. 시작만 보면 퇴근 시간에 걸치는 배정이 통과한다 |
 | 6 | **겹침 없음** | 목표 시각 앞뒤 예약의 `시작 + 소요 + 이동`으로 구간 계산. 시각 문자열 비교 금지 |
-| 7 | **실제 다니는 지역인가** | 아래 쿼리로 최근 1개월 방문 구 분포 확인 (**반얀 예약에는 적용 안 함** — 1-5) |
-| 8 | **퇴근 동선** | 그 건이 그 사람 **마지막 일정**이면 자택까지 거리를 본다 |
+| 7 | **담당 존 일치인가** | 2단계 ⓿의 `zone.id`와 후보의 그 날짜 `dwsr.zone_id`가 같은가. 다르면 후보표에 **"존 외(Zxx 담당)"를 명시**하고 ②의 detour 근거를 함께 쓴다 |
+| 8 | **경로에 얹히는가** | 직전 종료→목표→직후 시작이 시간·거리로 성립하는가(②의 판정 1·2). 한강 횡단은 감점 |
+| 9 | **최근 방문 지역** (sanity check) | 아래 쿼리. **순위 기준이 아니다** — detour가 작으면 이력 0건도 통과, detour가 크면 이력 많아도 탈락 (**반얀 예약에는 적용 안 함** — 1-5) |
+| 10 | **퇴근 동선** | 그 건이 그 사람 **마지막 일정**이면 자택까지 거리를 본다 |
 
-**⑦ 실제 다니는 지역**:
+**⑨ 최근 방문 지역 (보조 확인)**:
 
 ```sql
 SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(r.location,' ',2),' ',-1) gu, COUNT(*) c
@@ -288,9 +330,9 @@ WHERE r.detailer_id = :cand AND r.status IN ('WASHED','REPORT_SENT')
 GROUP BY gu ORDER BY c DESC;
 ```
 
-거리·근무시간·겹침을 다 통과해도 **한 번도 안 가본 권역**일 수 있다. 거리는 "그날 인접 예약과의 직선거리"라서 하루 일정 중간에 낯선 권역을 끼워 넣는 것을 못 걸러낸다. 이력이 0이어도 **그날 동선의 연장선**이면 수용 가능하다 — 기계적으로 탈락시키지는 말고 근거를 쓴다.
+담당 존이 같은 사람은 이 확인이 필요 없다(존이 곧 담당 권역이다). 존 밖 후보에서만, 경로가 성립하는데도 그 권역을 한 번도 안 가봤다면 근거에 적는다. **이 분포로 순위를 매기지 말 것** — 최근 방문 구가 많다는 것은 "그 사람 담당 권역"이라는 뜻일 뿐, 이 예약이 그날 그의 경로에 얹힌다는 뜻이 아니다.
 
-**⑧ 자택**:
+**⑩ 자택**:
 
 ```sql
 SELECT d.id, d.name, ss.home_address, ss.status, ss.region
@@ -313,11 +355,13 @@ WHERE d.id IN (:cands);
 예약별로 이 표를 출력한다.
 
 ```
-#89032 | 정영환 | 07-31 12:00 | 김포 양촌읍 학운산단2로 53-15 | 소요 70분
-  1순위  김민준(206)  6.1km  그날 10:00/40m·14:00/40m → 12:00 삽입 가능, 근무 10~19,
-                            김포 이력 23건, 현직, 그날 4건(상한 내)
-  2순위  김승규(190)  9.3km  10:00/65m 종료 11:05 → 이동 30분, 여유 25분(tight)
-  탈락   유현종(154)  10:00 예약이 90분이라 11:30 종료 + 이동 45분 → 12:00 불가
+#89032 | 정영환 | 07-31 12:00 | 김포 양촌읍 학운산단2로 53-15 | 소요 70분 | 존 Z4(강서구/김포시)
+  1순위  김민준(206)  ✅Z4 담당   10:00/40m 종료 10:40 → 6.1km → 12:00 시작,
+                                14:00 다음 건까지 3.2km. detour +2.1km. 근무 10~19, 그날 4건
+  2순위  김승규(190)  ✅Z4 담당   10:00/65m 종료 11:05 → 9.3km(이동 30분) 여유 25분(tight)
+  3순위  최우석(143)  ⚠️존 외(Z10 담당)  detour +4.4km이나 그날 동선이 김포 방향,
+                                Z4 담당 2명이 tight해 대안으로 제시
+  탈락   유현종(154)  Z4 담당이지만 10:00 예약이 90분이라 11:30 종료 + 이동 45분 → 12:00 불가
 ```
 
 - 후보가 0이면 **왜 0인지**(전원 휴무·근무 외 시각·묶음을 받을 사람 없음 등)를 쓰고 ③④ 결과를 함께 제시한다.
@@ -479,7 +523,10 @@ curl -s -X POST "$GW/careplus/message/send/v2" \
 | 근무 시작 시각만 본다 | 퇴근 시간에 걸치는 배정이 통과한다 |
 | 휴무 시간 길이로 전일 판정 | KST 13~23시 부분 블록을 전일로 읽어 오전 가능자를 탈락시킨다 |
 | 근무시간을 10~19로 가정 | 이른 조(08~17)에게 18:00을 배정한다 |
-| 존으로 후보를 만든다 | 실제로 그 동네를 도는 다른 존 사람이 통째로 안 보인다 |
+| 반경(직선거리)·최근 방문 구로 순위를 만든다 | 담당 존이 기준인데 남의 존 사람이 1순위로 올라온다. 존 → 그날 앞뒤 경로 순으로만 줄 세운다 |
+| 존을 `supply_sheet.region`이나 구 이름으로 판정한다 | region은 낡은 값이고 존 폴리곤은 이름의 행정구역보다 넓다. `ST_Contains` + 그 날짜 `dwsr.zone_id`가 정본 |
+| `zone.id`를 Z-번호로 착각한다 | Z12=10·Z16=12·Z9=8. 엉뚱한 존 담당자를 후보로 올린다 |
+| 존 밖 후보를 "목표까지 최단거리"로 고른다 | 끼워 넣어 늘어나는 거리(detour)가 기준이다. 최단거리 1위가 동선을 왕복으로 찢을 수 있다 |
 | 1차 탐색에서 나온 이름만 보고 "후보 없음" 결론 | 검증 전 원자료다. 전원 탈락하면 다음 탐색 단계로 넓혀야 한다 |
 | 자택을 안 본다 | 그날 마지막 일정이면 퇴근길 편도 수십km를 얹는다 |
 | 실패 후 후보표에 없던 사람에게 배정 | 사용자가 승인하지 않은 배정이 된다 |
