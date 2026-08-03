@@ -206,6 +206,21 @@ LEFT JOIN zone z ON ST_Contains(z.area,
 - `address_id`·`user_address`는 건드리지 말 것 — 고객 저장 주소(집)를 고치면 향후 예약까지 오염.
 - 새 좌표: NAVER 지오코딩 `GET https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=<주소>`, 헤더 `x-ncp-apigw-api-key-id` / `x-ncp-apigw-api-key` (키: caramel-zero `.env.dev`의 `NAVER_MAPS_GEOCODE_CLIENT_ID/SECRET`). 응답 `addresses[0].x`=lng, `.y`=lat.
 
+**건물·단지 단위 집계 — `apartment_yn`으로 오피스 오염을 제거한다 (2026-08-04)**
+
+`user_address.building_name` GROUP BY로 "어느 단지에 우리 고객이 사는가"를 뽑으면 **서울오토갤러리(딜러 상사)·캐피탈타워·한국지식재산센터 같은 오피스가 섞인다.** 이름으로 수동 배제하지 말 것 — `apartment_yn = 1` 한 컬럼으로 전량 걸러진다(실측: 강남3구+용산 상위 120개 단지에서 오염 0건).
+
+```sql
+FROM user_address ua
+WHERE ua.sigungu IN ('강남구','서초구','송파구','용산구')
+  AND ua.apartment_yn = 1
+  AND ua.deleted_yn = 0
+GROUP BY ua.building_name, ua.sigungu
+HAVING COUNT(DISTINCT ua.user_id) >= 5   -- 오탈자성 1~2건 단지 제거
+```
+- **좌표는 `user_address`에 내장돼 있다** — 단지 지도·지오코딩이 필요하면 `ua.latitude`/`ua.longitude`를 그대로 쓴다. 외부 지오코딩 API를 다시 태울 필요 없음(실측 좌표 확보율 120/120 = 100%).
+- 타겟 차량 수는 `reservation_car`→`car`→`car_model_target` 경유(§2d 패턴 A). 단지별 세차 건수는 재현되지만 **고객 수는 DB가 누적이라 과거 기록값보다 계속 커진다** — 시점을 병기할 것.
+
 ### 2f. Zone 매핑 (ST_Contains)
 
 - `reservation`엔 `zone_id` 없음. `zone.area`는 polygon(SRID 0, 좌표 순서 **(lng lat)**)
@@ -470,6 +485,44 @@ AND (u.phone NOT IN ('01020866510', ...) OR u.phone IS NULL)
 
 기존 문서 일부에 "2025-09부터"로 적혀 있으나 실측은 **2025-09까지 0건, 2025-10부터 전환 시작**(2025-10 혼재, 2025-11 이후 거의 전부).
 → 그 이전 기간의 포인트는 `metadata.$.point` 폴백 필수: `COALESCE((payment_medium POINT SUM), metadata.$.point, 0)`. 안 하면 과거 포인트 차감이 0이 되어 매출이 과대된다.
+
+### 4b-10. 경과일 버킷의 누적 평균은 시계열로 비교할 수 없다 (2026-08-04 실측)
+
+구독 코호트의 "경과일 버킷별 누적 세차 횟수"를 뽑으면 버킷마다 **모집단이 다르다.** 실측:
+
+| 버킷 | 관찰 n | 누적 평균 세차 |
+|---|---:|---:|
+| D1-90 | 6,282 | 2.09회 |
+| D91-180 | 3,112 | 4.11회 |
+| D181-270 | 1,675 | **4.97회** |
+| D271-365 | 814 | **4.09회** |
+
+D181-270이 D271-365보다 높은 건 개선이 아니라, D181 버킷에 **D271 도달 전 해지한 유저가 섞여** 있어서다. 같은 유저를 따라간 값이 아니므로 "6개월차에 4.97 → 1년차에 4.09로 줄었다"는 해석은 틀린다.
+- **연간 횟수를 말할 땐 12개월 완주 코호트만 쓰고 `n`을 병기한다** — 실측 = 완주 814명 · 평균 4.1회 · **중앙값 2회**(평균만 쓰면 과대). 상품별로 크게 갈린다(월2회 8.0 / 월1회 4.8 / 월1회 외부+내부 5.6 / 두달1회 2.5 / 상품 미지정 1.2 / 1개월 무료 0.6).
+- 비교군은 비구독(1회권) 1.6회 → 구독/비구독 = **2.6배**.
+- 절대 하지 말 것: 짧은 버킷 평균에 연환산 계수를 곱하기. §4b-1(이력 CTE 하한)과 같은 계열의 오류다.
+
+### 4b-11. 🔴 '월 2회(외부만)' 구독 리텐션은 기존 기록값이 재현되지 않는다 (미해결)
+
+아래 정의로 짜면 기존 기록과 **8.5%p까지 벌어진다.** 어느 쪽이 맞는지 미확정이므로 **인용 시 반드시 쿼리 정의와 n을 같이 쓴다.**
+
+```sql
+-- 재현 시도한 정의 (2026-08-04)
+payment.name LIKE '월 2회(외부만)%' AND payment.type='SUBSCRIPTION' AND payment.amount > 0
+  + car_model_target.is_target = 1        -- 타겟 차량 보유
+  + first_paid_kst 기준 cohort_date, D1~365 경과일 버킷 MAX 활성 여부
+```
+
+| 버킷 | 위 정의 (n=490) | 기존 기록 (n=368) |
+|---|---:|---:|
+| D1-30 | 89.0% | 96.5% |
+| D151-180 | **57.8%** | **66.3%** |
+| D181-210 | 54.1% (분모 292) | — |
+| D211-240 | 47.5% (분모 80) | — |
+
+- 원본이 **세차 활동 기준 추가 필터**를 걸었을 가능성이 크다(결제 존재 ≠ 실사용). 확인되면 이 절을 갱신할 것.
+- **분모를 반드시 라벨링한다** — 코호트 리텐션(분모=코호트 전체)과 조건부 생존율(분모=직전 버킷 생존자)은 전혀 다른 값이다. 위 표는 코호트 리텐션이고, 조건부 생존율은 버킷마다 83~88%로 훨씬 높게 보인다. 섞으면 큰 오차.
+- **상품 출시가 2025-10이라 D271 이상 도달자가 0명이다** — "1년 리텐션"은 아직 데이터가 없다. 만들어 쓰지 말 것.
 
 ---
 
@@ -920,6 +973,22 @@ BEFORE/AFTER 섹션 종류:
 - 외부: `OUTSIDE_FRONT`, `OUTSIDE_DRIVER_SIDE`, `OUTSIDE_PASSENGER_SIDE`, `OUTSIDE_FRONT_GLASS`, `OUTSIDE_DRIVER_SIDE_WHEEL`
 - 내부: `INSIDE_DRIVER_SEAT`, `INSIDE_CENTER_FASCIA`
 - 평가 컬럼(`evaluation_status`, `evaluated_at`, `evaluator`)은 현재 전량 `PENDING` — 미사용 상태.
+
+**🔴 차량 거래(매매)는 DB에 기록 시스템이 없다 (2026-08-04 전수 확인)**
+
+회계상 **연 100억원 규모의 최대 매출원**인데 DB엔 거래 이력이 한 건도 없다. "매매 실적 0" = 사업이 없다는 뜻이 **아니다.** 매번 재탐색하지 말 것:
+
+| 테이블 | 행 수 | 실제 용도 |
+|---|---:|---|
+| `deal` | **0** | 빈 테이블 |
+| `transaction_receipt` | **0** | 빈 테이블 |
+| `heydealer_daily_report` | **0** | 빈 테이블 |
+| `dealer` | 171 | 내부 담당자 리스트(이름/전화) — 거래 기록 아님 |
+| `bank_account_transaction` | 1,275 | **디테일러 급여 정산**(`detailer_id` FK) — 매매 아님 |
+| `vehicle_inspection` | 332 | 점검 기록, 마지막 행 2025-11-20 |
+
+- `SHOW TABLES LIKE '%trade%'`·`'%sale%'` → 0건. 매매 전용 테이블 자체가 없다.
+- ⟹ 매매 대수·매출·"세차 고객의 매매 전환율"은 **회계 기장 또는 계획치**로만 말할 수 있다. DB로 산출한 것처럼 쓰면 안 된다. 상세 = memory `reference_repair_and_trade_revenue_sources.md`.
 
 ### 6e. 쿠폰
 
