@@ -104,6 +104,16 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 
 대안: `checkup.car_id`(WASHED만), `subscription.represent_car_id`(구독세차 7.5%만). `user_service.applicable_car_id`는 ~60%가 NULL이라 부적합(직관적이라 빠지기 쉬운 함정 — reservation_car는 100% 커버). 검증 2026-06-26.
 
+**⚠️ 외부공급/B2B 더미 차량 = `car.plate_number='00가0000'` (검증 2026-07-29)**
+- 활성 83대·소유자 81명, 세차 587건. 차주명이 사람 이름이 아니라 `한남 테슬라`·`마이바흐`·`벤틀리` 같은 **물량 단위 계정**(딜러·제휴 공급).
+- 🔴 **차량 단위 집계(차량당 세차 횟수, 기록 깊이, 최다 세차 차량)에서 반드시 제외.** 미제외 시 상위가 통째로 오염된다 — 실측: 최다 357회(한남 테슬라)·123회(마이바흐)·100회(벤틀리) vs **제외 후 실고객 최다 70회**. 총량 영향은 1.4%로 작지만 분포 상단은 치명적.
+- `app_user.test_yn`·블랙리스트로는 걸러지지 않는다(정상 고객 계정으로 등록돼 있음). 필터: `IFNULL(c.plate_number,'') <> '00가0000'`.
+
+**⚠️ `reservation.reservation_datetime`에 zero-date 행이 있다 (검증 2026-07-29)**
+- `< '2020-01-01'` 또는 NULL인 행 **2,538건**(대부분 CREATED 유령, CANCELED 684건, WASHED는 7건뿐).
+- 🔴 `MIN(reservation_datetime)`이 **1970-01-01**을 반환한다 → "서비스 언제부터"·최초 세차 시점 판정이 통째로 틀린다. **실제 최초 = 2024-01-19.**
+- 기간 시작점을 뽑을 땐 `WHERE reservation_datetime > '2020-01-01'` 하한을 걸 것. WASHED 기준 손실은 7건으로 무해.
+
 **⚠️ "다차(2대+) 유저" 정의 — 등록 기준 금지**
 - 등록 차량(`car` 활성 2대+) 5,913명 vs 실제 2대+ 세차(WASHED) 1,484명 — **등록 기준은 ~4배 과대** (검증 2026-06-26).
 - 다차 세그먼트/리텐션 분석의 모수 = `reservation_car` 경유 `COUNT(DISTINCT car_id) >= 2` (WASHED 기준).
@@ -121,6 +131,13 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 **차량 모델 조인 — `car.car_model_id` 없음**
 - FK 컬럼명은 **`car.model_id`** — `car_model_id`는 존재하지 않아 "Unknown column" 오류 발생.
 - 올바른 조인: `LEFT JOIN car_model cm ON c.model_id = cm.id`
+- 🔴 **`model_id`가 NULL인 실차가 실존한다** (2026-08 기준 233대·148명, `deleted_yn=0 AND temp_yn=0`). 어드민·디테일러 차량등록 API가 modelId 없이도 INSERT를 허용해서 생긴다. ⟹ **`INNER JOIN car_model`이나 `JOIN car_model_target cmt ON cmt.id=c.model_id`로 티어·타겟을 집계하면 이 차량들이 조용히 분모에서 사라진다.** "차량 수가 안 맞는다" 싶으면 `SUM(c.model_id IS NULL)`을 먼저 세볼 것. 모수 카운트는 `deleted_yn=0 AND temp_yn=0` **둘 다** 필요(제품 코드도 `temp_yn: false`로 필터하므로 이게 실제 영향 모수와 일치).
+- 참고: 이 row는 고객 차량목록 API(`/v1/vehicles/garage`·`/v1/my-garage`)를 **404로 깨뜨려 그 고객은 예약을 못 한다**. 발견하면 제품팀에 알릴 것. (마이차고 화면은 `/v1/me`를 써서 정상으로 보이는 비대칭이 있음 — 브랜드 없이 번호판만 뜨는 차량이 시그널.)
+
+**원부 이력 `car_wonbu_history` — 브랜드 컬럼 없음**
+- 있는 컬럼: `plate_number, search_number, mileage, registered_at, final_registered_at, inspection_valid_start_at, inspection_valid_end_at, model, type, vin, car_year, color, form, engine_type, capacity, is_commercial_car, deleted_yn, requested_at, created_at`.
+- **`brand` 컬럼은 없다** — 쓰면 "Unknown column 'brand'". 브랜드는 `car.brand_id → car_brand` 경유. 차종 문자열은 `model`, 연식은 `car_year`.
+- 조인 키는 `plate_number`(car_id 아님). 번호판이 원부에 아예 없는 차량도 있으니 `LEFT JOIN` + NULL 처리.
 
 **차종 티어(T1~T7) 판정 — `car_model.tier_id` → `car_tier.tier`**
 - `car`에도 `car_model`에도 **티어 숫자 컬럼은 없다**. 정본은 `car_tier.tier`(int).
@@ -188,6 +205,21 @@ LEFT JOIN zone z ON ST_Contains(z.area,
 - `reservation`의 `location`/`detailed_location`/`latitude`/`longitude` 4필드만 UPDATE.
 - `address_id`·`user_address`는 건드리지 말 것 — 고객 저장 주소(집)를 고치면 향후 예약까지 오염.
 - 새 좌표: NAVER 지오코딩 `GET https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=<주소>`, 헤더 `x-ncp-apigw-api-key-id` / `x-ncp-apigw-api-key` (키: caramel-zero `.env.dev`의 `NAVER_MAPS_GEOCODE_CLIENT_ID/SECRET`). 응답 `addresses[0].x`=lng, `.y`=lat.
+
+**건물·단지 단위 집계 — `apartment_yn`으로 오피스 오염을 제거한다 (2026-08-04)**
+
+`user_address.building_name` GROUP BY로 "어느 단지에 우리 고객이 사는가"를 뽑으면 **서울오토갤러리(딜러 상사)·캐피탈타워·한국지식재산센터 같은 오피스가 섞인다.** 이름으로 수동 배제하지 말 것 — `apartment_yn = 1` 한 컬럼으로 전량 걸러진다(실측: 강남3구+용산 상위 120개 단지에서 오염 0건).
+
+```sql
+FROM user_address ua
+WHERE ua.sigungu IN ('강남구','서초구','송파구','용산구')
+  AND ua.apartment_yn = 1
+  AND ua.deleted_yn = 0
+GROUP BY ua.building_name, ua.sigungu
+HAVING COUNT(DISTINCT ua.user_id) >= 5   -- 오탈자성 1~2건 단지 제거
+```
+- **좌표는 `user_address`에 내장돼 있다** — 단지 지도·지오코딩이 필요하면 `ua.latitude`/`ua.longitude`를 그대로 쓴다. 외부 지오코딩 API를 다시 태울 필요 없음(실측 좌표 확보율 120/120 = 100%).
+- 타겟 차량 수는 `reservation_car`→`car`→`car_model_target` 경유(§2d 패턴 A). 단지별 세차 건수는 재현되지만 **고객 수는 DB가 누적이라 과거 기록값보다 계속 커진다** — 시점을 병기할 것.
 
 ### 2f. Zone 매핑 (ST_Contains)
 
@@ -263,6 +295,11 @@ JOIN zone z ON z.id = r.zone_id     -- ⚠️ service_zone 테이블 없음 — 
 ```
 
 ⚠️ `detailer_region` 테이블 쓰지 말 것 — `service_region_id` 기반 구식 구조.
+
+🔴 **존은 하드 파티션이다 — "옆 존 사람이 왜 슬롯에 안 뜨나"의 답 (2026-07-31 코드+DB 확정).** 슬롯 조회 코드(zero-api `query-time-slots.handler.ts`)엔 "존 기반 결과가 0건이면 `zoneId: undefined`로 재조회해 **구(`service_region_group_id`) 단위로 넓히는**" 폴백이 있지만 실제로는 안 돈다:
+- ① 판정이 **조회 창 전체** 기준(`primarySlots.length === 0`)이다. 앱은 한 달을 조회하므로 후반에 1개라도 있으면 폴백 미발동 → 근일(D+0~2) 공백이 그대로 노출된다.
+- ② **DEFAULT 근무룰은 전부 `zone_id`만 있고 `service_region_group_id`는 NULL**이다(전수 확인). srg만 가진 룰은 구형 디테일러 1명씩(종로1·중구2·용산3·성동4·광진5·동대문6·중랑7·성북8·강동25·인천53~58·구리99·남양주100)뿐이고 **서초22·강남23·마포14 보유자는 0명**, `zone_id`·srg 둘 다 NULL인 전지역 룰도 없다 → 폴백이 돌아도 후보 0명.
+- ⟹ 존별 캐파가 남아도 **다른 존 고객은 그 캐파를 쓸 수 없다**. "전사 슬롯은 여유 있는데 특정 지역만 예약 불가"의 구조적 원인. 🔑 룰 필터는 **rule 단위 OR**이고 같은 요일에 복수 룰이 허용되므로, 한 사람을 하루 안에 두 존으로 쪼개 넣는 것(오전 원존/오후 인접존)은 **코드 변경 없이 DB만으로** 된다.
 
 **zone id → name 매핑:**
 
@@ -449,6 +486,74 @@ AND (u.phone NOT IN ('01020866510', ...) OR u.phone IS NULL)
 기존 문서 일부에 "2025-09부터"로 적혀 있으나 실측은 **2025-09까지 0건, 2025-10부터 전환 시작**(2025-10 혼재, 2025-11 이후 거의 전부).
 → 그 이전 기간의 포인트는 `metadata.$.point` 폴백 필수: `COALESCE((payment_medium POINT SUM), metadata.$.point, 0)`. 안 하면 과거 포인트 차감이 0이 되어 매출이 과대된다.
 
+### 4b-12. 연도별과 누적을 한 화면에 쓸 때는 필터를 통일하라 (2026-08-04 실측)
+
+같은 "세차 완료 건수"인데 **연도별은 raw(사용자 필터 없음), 누적은 live_users 필터**로 뽑아 한 장표에 나란히 두면 합계가 안 맞는다. 실측 갭 **437건(1.04%)** — 손으로 더하는 자리에서 바로 들킨다.
+
+| 기준 | 2024 | 2025 | 2026 1~7월 | 합계 |
+|---|---:|---:|---:|---:|
+| raw (필터 없음) | 2,118 | 16,474 | 24,258 | 42,850 |
+| **live_users (정본)** | **2,076** | **16,298** | **24,078** | **42,452** |
+
+- 원인 2가지: (1) `live_users`(deleted/test/temp + 블랙리스트 전화번호 + `OR phone IS NULL`) 적용 여부 (2) **측정 시점** — 같은 정의라도 7/29 스냅샷과 7/31 마감이 400건 이상 벌어진다.
+- ⟹ **한 장표·한 문단에 들어가는 수치는 같은 쿼리에서 한 번에 뽑는다.** 연도별을 A에서, 누적을 B에서 가져오지 말 것. 인용할 땐 "테스터 제외 실고객 기준 · YYYY-MM-DD까지"를 같이 적는다.
+- ⚠️ 모델·재무 시트의 2025 세차 완료수(16,301)는 또 다른 스냅샷이다. DB 값(16,298)과 3건 차이라 실무상 무해하지만, **DB 수치와 모델 수치를 같은 표에 섞지 말 것.**
+
+### 4b-10. 경과일 버킷의 누적 평균은 시계열로 비교할 수 없다 (2026-08-04 실측)
+
+구독 코호트의 "경과일 버킷별 누적 세차 횟수"를 뽑으면 버킷마다 **모집단이 다르다.** 실측:
+
+| 버킷 | 관찰 n | 누적 평균 세차 |
+|---|---:|---:|
+| D1-90 | 6,282 | 2.09회 |
+| D91-180 | 3,112 | 4.11회 |
+| D181-270 | 1,675 | **4.97회** |
+| D271-365 | 814 | **4.09회** |
+
+D181-270이 D271-365보다 높은 건 개선이 아니라, D181 버킷에 **D271 도달 전 해지한 유저가 섞여** 있어서다. 같은 유저를 따라간 값이 아니므로 "6개월차에 4.97 → 1년차에 4.09로 줄었다"는 해석은 틀린다.
+- **연간 횟수를 말할 땐 12개월 완주 코호트만 쓰고 `n`을 병기한다** — 실측 = 완주 814명 · 평균 4.1회 · **중앙값 2회**(평균만 쓰면 과대). 상품별로 크게 갈린다(월2회 8.0 / 월1회 4.8 / 월1회 외부+내부 5.6 / 두달1회 2.5 / 상품 미지정 1.2 / 1개월 무료 0.6).
+- 비교군은 비구독(1회권) 1.6회 → 구독/비구독 = **2.6배**.
+- 절대 하지 말 것: 짧은 버킷 평균에 연환산 계수를 곱하기. §4b-1(이력 CTE 하한)과 같은 계열의 오류다.
+
+### 4b-11. 🔴 '월 2회(외부만)' 구독 리텐션은 기존 기록값이 재현되지 않는다 (미해결)
+
+아래 정의로 짜면 기존 기록과 **8.5%p까지 벌어진다.** 어느 쪽이 맞는지 미확정이므로 **인용 시 반드시 쿼리 정의와 n을 같이 쓴다.**
+
+```sql
+-- 재현 시도한 정의 (2026-08-04)
+payment.name LIKE '월 2회(외부만)%' AND payment.type='SUBSCRIPTION' AND payment.amount > 0
+  + car_model_target.is_target = 1        -- 타겟 차량 보유
+  + first_paid_kst 기준 cohort_date, D1~365 경과일 버킷 MAX 활성 여부
+```
+
+| 버킷 | 위 정의 (n=490) | 기존 기록 (n=368) |
+|---|---:|---:|
+| D1-30 | 89.0% | 96.5% |
+| D151-180 | **57.8%** | **66.3%** |
+| D181-210 | 54.1% (분모 292) | — |
+| D211-240 | 47.5% (분모 80) | — |
+
+- 원본이 **세차 활동 기준 추가 필터**를 걸었을 가능성이 크다(결제 존재 ≠ 실사용). 확인되면 이 절을 갱신할 것.
+- **분모를 반드시 라벨링한다** — 코호트 리텐션(분모=코호트 전체)과 조건부 생존율(분모=직전 버킷 생존자)은 전혀 다른 값이다. 위 표는 코호트 리텐션이고, 조건부 생존율은 버킷마다 83~88%로 훨씬 높게 보인다. 섞으면 큰 오차.
+- **상품 출시가 2025-10이라 D271 이상 도달자가 0명이다** — "1년 리텐션"은 아직 데이터가 없다. 만들어 쓰지 말 것.
+
+### 4b-13. 전화번호 리스트를 DB에 대조할 땐 `GROUP BY 전화번호` — `app_user.id`로 묶으면 한 사람이 쪼개진다 (2026-08-04 실측)
+
+**한 전화번호에 `app_user` row가 여러 개 존재한다.** 영업·CS 리스트(시트)를 번호로 조회할 때 `JOIN app_user` 후 `GROUP BY u.id`로 집계하면 **같은 사람이 계정 수만큼 여러 행으로 갈라지고, 예약이 한쪽 계정에만 있으면 다른 행은 "활동 0"으로 나온다.** 대상자 명단을 뽑는 쿼리에서 이건 오탐이다.
+
+```sql
+-- 정본: 번호로 묶고, 계정 수도 같이 확인
+SELECT REPLACE(u.phone,'-','') AS ph, COUNT(DISTINCT u.id) AS accounts, SUM(...) 
+FROM app_user u
+LEFT JOIN reservation r ON r.user_id=u.id AND r.status NOT IN ('CANCELED','CREATED')
+WHERE REPLACE(u.phone,'-','') IN (:phones)
+GROUP BY ph          -- ⚠️ GROUP BY u.id 아님
+```
+
+- 실측(반얀 고객 552개 번호 대조): **33/552 = 6.0%가 계정 2~3개**, 그중 **11개 번호는 조회 기간 예약이 한쪽 계정에만 몰려 있었다** → `u.id` 기준으로 짰으면 11명(2.0%)이 "미접촉"으로 잘못 분류된다. 차량·주소로 유저를 좁혀 들어가는 경로(`car.user_id` 등)도 같은 함정.
+- 시트 번호는 `010-1234-5678` 하이픈 포함이 흔하므로 **양쪽 다 `REPLACE(phone,'-','')`** 로 정규화. `app_user.phone`은 하이픈 없는 게 원칙이지만 신뢰하지 말 것.
+- ⚠️ **번호 자체가 깨진 계정이 있다** — 실측으로 `app_user.phone='0079'`(4자리)가 존재. `LENGTH(REPLACE(phone,'-',''))<>11`을 먼저 세서 "매칭 실패"와 "번호 불량"을 구분할 것. 관련: 050 vno는 phone이 아니라 user_id 단위 키잉(§ `customer_vno`).
+
 ---
 
 ## 5. 공통 패턴
@@ -503,6 +608,20 @@ AND r.id NOT IN (
 **취소율 측정 함정**: `user_service`는 예약 취소 시 `deleted_yn=1`로 soft-delete됨. 취소 건을 분모에 넣으려면 `deleted_yn` 필터를 빼야 함 — 안 그러면 취소가 통째로 빠져 취소율이 0%로 왜곡.
 
 **취소 시 세차권 "반환" = 새 row 재발급 (2026-07-19 실측)**: 예약 취소(어드민 bulk-cancel `ticketAction=GIVE_BACK` 등)로 세차권이 반환되면 기존 `user_service` row의 `used_yn`을 0으로 되돌리는 게 아니라 ① 기존 row는 `used_yn=1`·`deleted_yn=1`로 soft-delete되고 `reservation_id` 연결이 그대로 남으며 ② 동일 `service_id`의 새 미사용 row(`used_yn=0`, `reservation_id=NULL`)가 새로 생성됨. ⟹ row 수를 발급 수로 세면 이중계산, `deleted_yn=1`을 "소실"로 세면 오판(반환분은 새 row로 살아 있음).
+
+**🔴 "고객이 가진 세차권 N장" = 미사용 + 미래예약에 물린 것 (2026-07-31 실측)**: CS 문의("몇 장 남았냐", "유효기간 연장해달라")에 `used_yn=0`만 세면 **틀린다.** 구독 고객은 자동예약 배치가 미래 예약을 미리 잡으면서 세차권을 `used_yn=1`로 선점해두기 때문에, 미사용 row가 0장인데 고객은 "7장 남았다"고 말하는 상황이 정상적으로 발생한다. 그 예약을 취소하면 위 GIVE_BACK 경로로 새 미사용 row가 나오므로 고객 인식이 맞다.
+```sql
+-- 고객 보유 세차권 (실질)
+SELECT us.id, s.name, r.status,
+       CASE WHEN us.used_yn = 0 THEN '미사용' ELSE '예약선점' END AS state
+FROM user_service us
+JOIN service s ON s.id = us.service_id
+LEFT JOIN reservation r ON r.id = us.reservation_id
+WHERE us.user_id = ? AND us.deleted_yn = 0
+  AND (us.ended_at IS NULL OR us.ended_at > NOW())
+  AND (us.used_yn = 0 OR r.status = 'CONFIRMED')   -- WASHED = 실소진이라 제외
+```
+전체 규모(2026-07-31, 살아있고 미만료인 `user_service` 기준): 미사용 18,860 / 미래 CONFIRMED 선점 4,816 / 소진(WASHED) 35,248. **선점분이 실질 보유의 4,816÷23,676 = 20.3%** — 무시하면 CS 답변이 대량으로 틀린다.
 
 ### 5d. 구독 status=ACTIVE 필터
 
@@ -637,6 +756,7 @@ first_sub_reservations AS (
 - 장기(>7일) → capacity 집계에선 무시 (파견/퇴사 등 운영 메모)
 - 부분 시간 → 겹치는 슬롯만 차감. ⚠️ **매일 반복되는 4시간짜리 부분 블록이 수개월분 선삽입돼 있는 경우가 있다**(memo `셀원 품질 점검` = UTC 05:00~09:00 = KST 14~18시, 황석찬114에 4~8월분). 하루 겹침 COUNT로 "휴무"를 세면 오전 근무 가능자가 통째로 탈락 → **`TIMESTAMPDIFF(HOUR, from, to) > 8`로 종일/부분을 갈라** 종일만 종일 탈락시킬 것(§3c 항목 4).
 - `v_detailer_holiday_daily` 뷰 한계 있음 — capacity 쿼리에서는 `detailer_holiday` 직접 조회 권장
+- 🔴 **공휴일·전사휴무 캘린더 테이블은 없다 — `detailer_holiday`에 디테일러 1인당 1행으로 깔려 있다** (2026-07-29 확인). memo 규칙 `[전사휴무]<휴일명>`(예 `[전사휴무]대체휴일(광복절)` = 2026-08-17, 101행 종일 `(D-1) 15:00 ~ D 15:00`). ⟹ ①"그날 회사가 쉬는 날인가"는 `WHERE memo LIKE '[전사휴무]%'` 분포로 판별할 것 — 예약/슬롯 0건을 "수요 없음"이나 데이터 누락으로 오독하기 쉽다 ②**그 휴일에 0분(`from`=`to`) row인 사람 = 그날 예외적으로 일하는 사람**(반얀 단독 파견 등). 즉 0분 row는 무력화 표시일 뿐 아니라 "이 사람만 출근"의 시그널이다.
 - ⚠️ **"왜 슬롯에 안 뜨나" 진단에선 반대 — 휴무는 길이 무관 하드 차단** (2026-07-13). 플래그(booking_yn 등)·스케줄·rule이 다 정상이어도 해당 날짜에 holiday row 있으면 노출 0. 운영이 파견/별동대를 **매일 full-day 휴무 bulk INSERT**로 마킹하는 패턴이 있으니(같은 created_at·memo 예 "정비별동대") 미노출 진단 시 `memo` 확인 필수.
 
 **예약↔근무스케줄 정합성 감사 패턴 (2026-07-19, 반얀 재배정 사고 전수조사)**
@@ -663,6 +783,24 @@ first_sub_reservations AS (
 - 디테일러 가동률 대시보드: uid `fe6dr4x83wwlca`
 - Grafana API: `https://thetrive.grafana.net`
 - 가동률 공식: `count(*) / (5 * count(distinct detailer_id))` — 총 예약 / (5슬롯 × 디테일러 수)
+
+### 6b-2. 슬롯 수요 계측 = 미충족 수요 정본 (`time_slot_request_log` + `time_slot_result_log`) (2026-07-31)
+
+**"고객이 예약하려 했는데 자리가 없었나"는 `reservation`으로 볼 수 없다.** 슬롯 조회가 일어날 때마다 남는 이 두 테이블이 유일한 경로다(2025-10-30~, 40.7만건). 존별 공급 부족·핵심지역 예약 불가 진단은 여기서 출발할 것.
+
+- `time_slot_request_log`: `id`(**varchar UUID**, int 아님) · `user_id`(**NULL 많음** — 미인증 경로) · `address_id` · `latitude/longitude` · `from_date`/`to_date`(조회 창, 앱은 보통 **한 달**) · `zone_id`(2026-06~ 채움, 커버 75%) · `duration` · `last_detailer_id`
+- `time_slot_result_log`: `request_id`(위 `id`와 조인) · `time_slot`(UTC) · `detailer_id` · `priority` · **`show_yn`**
+- 🔴 **`show_yn = 1` 필터 필수.** 안 걸면 미노출 슬롯까지 세어 "슬롯 있었다"로 오독한다.
+- 🔴 **`reservation_id`·`reserved_at`으로 전환율을 계산하지 말 것 — 0.2%만 채워져 있다**(2026-07: 63,536건 중 139건). 그대로 쓰면 전 존 전환율 0.0%가 나오고 "아무도 예약 안 한다"로 오답한다(실제로 한 번 걸림). 전환은 `reservation.created_at`이 요청 시각 +24h 안에 있는지로 따로 판정.
+- **정본 지표 3개** (Grafana `0. 카라멜_TV 대시보드` uid `ju4ln4m` 패널 9 `원인_공급`이 이 조합):
+  - `days_to_first_slot` = 요청일 → 첫 `show_yn=1` 슬롯까지 일수 (존별 P75가 핵심 — Z5 11일 vs Z12 3일 식으로 갈린다)
+  - `slots_within_3days` = 요청일 ~ +2일 노출 슬롯 수 (중앙값 0 = 그 존은 사실상 예약 불가)
+  - `D3초과%` = `days_to_first_slot >= 3 OR IS NULL` 비율
+  - 요청 단위는 세션이 아니라 `(user_id, address_id, 요청일 KST)` **dedup 후** 세야 한다(한 번 보면 로그가 3~5건씩 쌓인다).
+- 존 배정은 `address_id → user_address` 좌표 → `ST_Contains`(§2f). `zone_id` 컬럼은 커버가 75%라 전 기간 분석엔 좌표 판정이 안전.
+- **어드민 화면이 이미 있다**: `/admin/map` = 슬롯 수요 지도(날짜별 존별 요청 수 + 근무 디테일러 수 + 폴리곤). zero PR #577, 2026-06-18 배포. 존 수급 질문에 새 도구를 만들기 전에 이걸 먼저 볼 것.
+- ⚠️ **존별 인원·캐파를 셀 때 `dws.type='DEFAULT'` 필터를 넣어라.** 반얀 파견 스케줄의 rule도 `zone_id=8`이라 Z9로 합산돼 인원이 과대 집계된다(13명 중 6명이 반얀 상주 = 실효 7명). 위 대시보드 패널 12·15도 이 왜곡이 있다.
+- ⚠️ 근무창 2시간 그리드로 만든 capacity 모델은 개인 편차·부분휴무를 놓쳐 **가동률 100%를 넘는 칸이 나온다**(실측 Z4 150%). 존 간 상대 비교용으로만 쓸 것.
 
 ### 6c. 마케팅
 
@@ -791,6 +929,18 @@ SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
   ```
 - 값 예시: `'외부만'`, `'외부 + 내부'`, `'[리터치] 외부만'`, `'월 2회(외부만)'`
 
+**🔴 세차범위(외부만/외부+내부)를 *집계*할 때는 `service.name`이 아니라 `service_id` 격자로 (검증 2026-08-03)**
+- 단건 조회는 위 `s.name`으로 충분하지만, **`GROUP BY s.name`으로 집계하면 못 쓴다** — `user_service`에 붙는 CAR_WASH service id가 **85종**이고 프로모션·제휴 변형(`[토스] 올클린 케어`·`[프로모션]`·`[리터치] 외부만`·`올클린 케어 for 반얀트리`·`올클린 케어 (55)`·`[선물] 실내 + 실외 세차 1회권` …)이 60행 넘게 쪼개진다. 이름 3개만 보고 clean하다고 판단하면 표가 산산조각난다.
+- **정본 격자 = `service.tier_id`(T1~T7) × 세차범위:**
+  | 범위 | service_id (T1→T7) |
+  |---|---|
+  | 외부 + 내부 (ALLCLEAN) | 14 · 17 · 20 · 23 · 26 · 29 · 32 |
+  | 외부만 (OUTSIDE_ONLY) | 15 · 18 · 21 · 24 · 27 · 30 · 33 |
+  | 내부만 | 16 · 19 · 22 · 25 · 28 · 31 · 34 |
+- 이 21개가 앱 정규 카탈로그분이고, 나머지 64종은 프로모션/제휴/패키지/구독 전용이다. **"정규 구매 기준" 집계는 이 격자로 좁히고, 격자 밖 비중을 함께 보고**할 것(리터치·제휴가 통째로 빠지므로 목적에 따라 포함 여부를 명시).
+- 참고: 격자 밖이 무시할 수준이 아니다 — 리터치 `[리터치] 외부만`만 해도 WASHED 기준 수백 건 규모.
+- 예약당 `user_service` 다중 row는 410/53,457 = **0.8%**(옵션·패키지 동반분), CAR_WASH 아닌 service.type(INSPECTION·MEMBERSHIP·WATER_REPELLENT)은 219/70,187 = **0.3%** → `user_service` 스키마 절의 `MIN(service_id)` dedup 패턴으로 충분하고 별도 `service.type='CAR_WASH'` 필터는 정밀 집계에서만 필요.
+
 **구독 플랜의 상품 구성 조회 — `payment.name`('월 2회')만으론 구성을 알 수 없음**
 - 구독 플랜명(월 1회/월 2회)은 어떤 세차 조합인지 말해주지 않는다. 구성은 구독에 연결된 발급 세차권으로 확인:
   ```sql
@@ -805,6 +955,29 @@ SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
 **서비스 상품 이름 동일해도 내용 다를 수 있음**
 - 같은 이름이라도 `description`이 다름. 예: `올클린 케어 (29)`는 왁스코팅 포함, `(55)`/`(35)`는 미포함.
 - 상품 비교·집계 시 `name`만 보고 "동일"로 단정 금지. `description`도 함께 조회·확인.
+
+**🔑 대면/비대면(고객 입회) 여부 = `wash_result.crm_type` (검증 2026-08-03)**
+컬럼명이 "CRM 타입"이라 대면 여부로 보이지 않지만, 디테일러 앱이 세차 후 여기에 기록한다. **다른 대면 판정 컬럼은 없다.**
+
+| 값 | 의미 | 건수(전량) |
+|---|---|---|
+| `ON_CALL` | 비대면 | 28,855 |
+| `FACE_TO_FACE` | 대면 | 11,796 |
+| `FACE_TO_FACE_EXPLAIN` | 대면(설명까지) — **2024-09~2025-04 레거시, 이후 미발생** | 818 |
+| NULL | 미기록 | 975 (2.3%) |
+
+- ⚠️ **`= 'FACE_TO_FACE'`만 쓰면 2025-04 이전 구간에서 대면이 과소집계된다.** 전 기간 분석은 `IN ('FACE_TO_FACE','FACE_TO_FACE_EXPLAIN')`.
+- ⚠️ **대면율 분모는 `COUNT(*)`가 아니라 `crm_type IS NOT NULL`** — NULL 2.3%를 비대면으로 밀면 대면율이 낮게 나온다.
+- 조인: `LEFT JOIN wash_result wr ON wr.reservation_id = r.id` (완료 전 예약엔 row 없음). 세차범위별로 보려면 같은 §6d의 「세차범위 집계 = service_id 격자」와 교차.
+- 🔑 **실측 시그널(2025-08~2026-08, 1회권·live_users)**: 대면율은 **세차범위가 회차보다 크게 좌우**한다 — 외부+내부 첫 세차 2,214/4,615 = **48.0%** vs 외부만 191/879 = **21.7%**(2.2배). 내부 세차는 차 안 접근이 필요해 키 전달·입회가 물리적으로 발생. 회차가 늘면 둘 다 감소(외부+내부 6회차+ 30.2% / 외부만 11.7%). **"대면 접점이 있는 세그먼트"를 정의할 때 회차만 보면 틀린다.**
+
+**세차 회차(n번째 세차) 매기기**
+```sql
+ROW_NUMBER() OVER (PARTITION BY r.user_id ORDER BY r.reservation_datetime, r.id) AS nth
+-- 모수는 status='WASHED'만. 구독/1회권을 섞어 순번을 매길지는 목적에 따라 명시할 것
+-- (1회권만 필터한 뒤 순번을 매기면 "생애 n번째 세차"가 아니라 "n번째 1회권 세차"가 된다)
+```
+⚠️ MySQL `GROUP BY <alias>`는 SELECT의 CASE alias가 아니라 원본 표현식으로 묶이는 경우가 있다 — `CASE WHEN nth>=6 THEN '6+' ... END AS nth`로 버킷팅하고 `GROUP BY nth`하면 **에러 없이 6+가 안 합쳐진 채** 결과가 나온다. 버킷은 `LEAST(nth,6)` 같은 식으로 만들고 그 식으로 GROUP BY할 것.
 
 **사진 테이블 구조**
 세차 전/후 사진은 `wash_result_image`가 메인(신규), `reservation_image`는 구버전.
@@ -821,10 +994,31 @@ JOIN reservation r ON r.id = wr.reservation_id
 WHERE wri.deleted_yn = 0
 ```
 
+**⚠️ `wash_result_image.status`는 BEFORE/AFTER 둘만이 아니다 (검증 2026-07-29)**
+전량 분포: AFTER 258,839 / BEFORE 243,191 / **DEFAULT 42,551**(정보성) / DONE 584 / ON_PROGRESS 208 + 타이어 상세(`FRONT_TIRE_TREAD`·`REAR_TIRE_SIZE` 등) 20여 종 소량.
+→ **전·후 사진 매수를 셀 때 `status IN ('BEFORE','AFTER')` 필터 없으면 약 8% 과대**(DEFAULT가 대부분). 반대로 "이 세차의 모든 사진"이면 필터를 빼야 한다 — 목적에 따라 명시할 것.
+(참고 규모 2026-07-29, 테스터 제외 실고객 WASHED 기준: 사진 540,464장 / 사진 보유 세차 39,631건 = 세차의 94.3%, 세차당 13.6장.)
+
 BEFORE/AFTER 섹션 종류:
 - 외부: `OUTSIDE_FRONT`, `OUTSIDE_DRIVER_SIDE`, `OUTSIDE_PASSENGER_SIDE`, `OUTSIDE_FRONT_GLASS`, `OUTSIDE_DRIVER_SIDE_WHEEL`
 - 내부: `INSIDE_DRIVER_SEAT`, `INSIDE_CENTER_FASCIA`
 - 평가 컬럼(`evaluation_status`, `evaluated_at`, `evaluator`)은 현재 전량 `PENDING` — 미사용 상태.
+
+**🔴 차량 거래(매매)는 DB에 기록 시스템이 없다 (2026-08-04 전수 확인)**
+
+회계상 **연 100억원 규모의 최대 매출원**인데 DB엔 거래 이력이 한 건도 없다. "매매 실적 0" = 사업이 없다는 뜻이 **아니다.** 매번 재탐색하지 말 것:
+
+| 테이블 | 행 수 | 실제 용도 |
+|---|---:|---|
+| `deal` | **0** | 빈 테이블 |
+| `transaction_receipt` | **0** | 빈 테이블 |
+| `heydealer_daily_report` | **0** | 빈 테이블 |
+| `dealer` | 171 | 내부 담당자 리스트(이름/전화) — 거래 기록 아님 |
+| `bank_account_transaction` | 1,275 | **디테일러 급여 정산**(`detailer_id` FK) — 매매 아님 |
+| `vehicle_inspection` | 332 | 점검 기록, 마지막 행 2025-11-20 |
+
+- `SHOW TABLES LIKE '%trade%'`·`'%sale%'` → 0건. 매매 전용 테이블 자체가 없다.
+- ⟹ 매매 대수·매출·"세차 고객의 매매 전환율"은 **회계 기장 또는 계획치**로만 말할 수 있다. DB로 산출한 것처럼 쓰면 안 된다. 상세 = memory `reference_repair_and_trade_revenue_sources.md`.
 
 ### 6e. 쿠폰
 
@@ -1060,8 +1254,17 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | deleted_yn | tinyint(1) | 0=정상 |
 | postpaid_yn | tinyint(1) | 0=선불, 1=후불(레거시: 선불권 소진 시 자동생성 후불권) **⚠️ 온보딩 '후불 결제(현장수금)' 예약은 postpaid_yn=0으로 생성됨 — 후불 판별에 이 컬럼 단독 사용 금지, `reservation_onsite_collection` 참조** |
 | applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
+| ended_at | datetime | 세차권 만료일 **⚠️ 무한대 sentinel이 여러 값으로 혼재 — 아래 참조** |
 
 - ⚠️ **취소 반환 = soft-delete + 새 row 재발급** (기존 row는 `deleted_yn=1`·`reservation_id` 유지, 새 미사용 row 생성) → 상세 §5c.
+- ⚠️ **고객 보유 세차권 수는 `used_yn=0`만 세면 안 된다** (미래예약 선점분 20% 누락) → 상세 §5c.
+
+**`ended_at` = 실효 만료일이고, 값이 지저분하다 (2026-07-31 실측)**
+- **게이팅 실재**: zero-api `prisma-entitlement.repository.ts`가 사용가능 세차권을 `OR: [{ended_at: null}, {ended_at: {gte: now}}]`로 거른다. 장식 컬럼이 아니므로 "보유 세차권" 쿼리엔 만료 조건을 반드시 넣을 것.
+- **무한대 sentinel이 한 값이 아니다** (deleted_yn=0 기준 분포): `2999`=39,832 · `2027`=17,619 · `2026`=5,553 · `2029`=3,104 · **`2099`=1,613** · `2025`=1,305 · NULL=568 · `2028`=208 · **`9999`=93** · 2030/2083/2098 소량. `YEAR(ended_at)=2999`만 무한으로 처리하면 2099·9999가 실만료일로 오분류된다.
+- **발급 경로별 만료 규칙**: 어드민 지급(`POST /v1/admin/users/{id}/tickets`)·쿠폰 발급 = **정확히 3년** (`user-service-expiration.policy.ts` `ISSUED_ENTITLEMENT_VALID_YEARS=3` + `endOfSeoulDateAfterYears` → 저장값 `YYYY-MM-DD 14:59:59` UTC = KST 23:59:59). 구독 발급분은 결제주기마다 제각각.
+- 🔴 **유효기간 일괄 연장 시 `ended_at < 목표일` 가드 필수** — 조건 없이 UPDATE하면 2999/2099/9999 행이 함께 걸려 **연장이 아니라 단축**이 된다.
+- 만료일 변경은 SQL 직접 UPDATE 대신 어드민 API `PATCH /v1/admin/users/{userId}/tickets/SERVICE/{ticketId}`. **전필드 덮어쓰기**(`deletedYn,endedAt,paidYn,postpaidYn,reservationId,usedYn` 전부 `.strict()`)라 빠뜨린 값은 날아간다 — 현재값을 읽어 그대로 재전송할 것.
 
 **⚠️ 무료/유료 판별에 쓰면 안 되는 컬럼 2개 (2026-07-26 실측)**
 - **`paid_amount`는 2026-05부터 채워지기 시작했다.** 2026-01~04 첫 세차 `user_service`는 **전부 0**이고, 5월 565건 중 443건·6월 670건 중 233건만 0이다. 시계열로 유·무료를 가르면 4월 이전이 통째로 "무료"가 되어 완전히 틀린다.
