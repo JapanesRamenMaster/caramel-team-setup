@@ -556,6 +556,33 @@ GROUP BY ph          -- ⚠️ GROUP BY u.id 아님
 
 ---
 
+### 4b-14. 시점 기준 미사용 세차권(선수금) 잔액 — `used_yn`은 **현재** 상태다 (2026-08-05 실측)
+
+"월말 기준 미이행 세차권이 얼마였나"(선수금·이연매출 추이)를 구할 때 `used_yn=0`을 쓰면 **과거 시점이 통째로 과소집계된다.** `used_yn`은 오늘 상태이므로, 과거에 미사용이었지만 그 후 소진된 세차권이 전부 빠진다. 최근 달일수록 오차가 작아지는 것이 이 버그의 지문이다(§4b-2와 같은 계열).
+
+- **`user_service`에 `used_at` 컬럼이 없다.** 소진 시점의 정본 = **연결된 `reservation`의 세차일**.
+- 시점 D의 미사용 판정 4조건: ①`created_at ≤ D` ②`deleted_yn=0 OR deleted_at > D` ③`ended_at IS NULL OR ended_at > D`(만료분은 부채 아님) ④`reservation_id IS NULL` **또는** 연결 예약의 세차일 `> D` **또는** 그 예약이 `WASHED/REPORT_SENT`가 아님.
+
+```sql
+LEFT JOIN (SELECT id, DATE_ADD(reservation_datetime, INTERVAL 9 HOUR) AS wash_kst, status
+           FROM reservation WHERE deleted_yn=0) r ON r.id = us.reservation_id
+WHERE us.reservation_id IS NULL OR r.id IS NULL
+   OR r.wash_kst > :asof OR r.status NOT IN ('WASHED','REPORT_SENT')
+```
+
+- 실측 격차: 2026-03-31 잔액이 `used_yn=0`으로는 6,660장, 시점 판정으로는 **10,652장 — 37% 과소**.
+- **금액은 `service.price`(정가)로 환산할 것.** `user_service.paid_amount`는 2026-05분부터만 채워져 추이를 못 만든다(위 `user_service` 치트시트). 정가 기준이라 실수령액보다 크다는 단서를 반드시 병기.
+- **발급 경로를 갈라야 해석이 된다** — `promotion_application_id`/`coupon_code_reward_id`/`coupon_campaign_reward_id` 중 하나라도 있으면 무상권, 아니면 `payment_id` 유무로 '결제로 발급' vs '어드민 지급'. 실측(2026-06-30): 결제 발급 4.90억 / 어드민 지급 1.33억 / 무상 0.15억 — 무상권을 섞으면 "선수금 증가"가 부풀려진다.
+
+### 4b-15. 세차 객단가 = 정의부터 맞춰라. 그리고 상승 원인은 **정가 vs 실현율**로 갈라야 한다 (2026-08-05 실측)
+
+- **카라멜 세차 객단가 정본 = (전체 세차매출 − 헤이딜러 건수×8.80만) ÷ 카라멜 세차 횟수.** `Caramel_monthly(A)` 시트 22행('세차 객단가 > 카라멜')이고, `tmp_mar_revenue.sql`의 `avg_revenue_per_wash`와 같은 값이 나온다(실측 2026-04 50,020원 / 05 51,657 / 06 54,423 = 시트 5.01·5.17·5.44와 일치).
+- ⚠️ **`세차 매출 ÷ 합계 세차 횟수`로 계산하면 틀린다** — 헤이딜러(외부공급) 건수가 분모에 섞여 값이 눌린다(2026-04 기준 4.88만 vs 정본 5.00만).
+- 🔴 **객단가 상승을 "옵션이 팔렸다"로 먼저 결론내지 말 것.** 분해 순서는 ①`item_kind`별(세차권/옵션/서비스변경) 기여 ②세차권 안에서 **정가 불변인지** 확인. 실측 2026-04→06 +8.8% 중 세차권 73% · 옵션 23%였고, **정가 인상은 0원이었다** — 같은 티어·같은 서비스의 `originalPrice`가 그대로였고(1회권 외부+내부 T3 59,536→60,000) 바뀐 건 **정가 실현율**이다(외부만 T4 67%→97%, 외부만 T5 48%→98%). 즉 원인은 가격 인상이 아니라 **프로모션·쿠폰 할인 축소 + 무상(0원) 세차 비중 감소**다.
+- **실현율 뽑는 법**: `tmp_mar_revenue.sql`의 `items_with_point`에 이미 `original_price`(=`metadata.prices[].originalPrice`)가 있다. `SUM(net_amount)/SUM(list_amount)`를 **동일 `service_id`(티어×세차범위) 단위로** 볼 것 — 티어 믹스가 섞이면 가격 변화와 구분이 안 된다.
+
+---
+
 ## 5. 공통 패턴
 
 ### 5a. KST 변환
@@ -1079,6 +1106,7 @@ BEFORE/AFTER 섹션 종류:
                   CAST(JSON_UNQUOTE(JSON_EXTRACT(p.metadata,'$.point')) AS SIGNED), 0))
     ```
     인식 시점 = `paid_at` = 쿠폰 등록/지급일(구매일 아님. 실제 현금은 제휴처가 받아 우리 PG를 안 거친다).
+    🔴 **그래서 `payment.type='PACKAGE'`의 건수·금액 추이를 "5·10회권 판매"로 읽으면 오답이다.** 팝업 쿠폰 사용분이 같은 type으로 들어와 판매처럼 보인다 — 실측 2026-06 PACKAGE 195건 중 **279건 상당이 `프리미엄 세차 패키지 1회권`(COUPON_PACKAGE_REDEEM)**이고 실제 5·10회권 판매는 **8건 399만원**뿐이었다(2026-07은 380건 vs 7건). 회권 판매만 세려면 `source <> 'COUPON_PACKAGE_REDEEM'` + `name LIKE '%회 이용권%'`로 좁히고, **반얀 지급분은 payment에 없으니 `crm_note`를 따로 더할 것**(바로 아래 항목).
   - **반얀트리 5·10회권** = `payment` row 자체가 없다(어드민/콜콘솔 grant + 계좌입금). `user_service`(service **137** '프리미엄 세차 패키지 올클린 케어')가 `product_id NULL·payment_id NULL·paid_amount 0`으로 지급되므로 **user_service엔 금액이 없다.** **금액 정본 = `crm_note.memo LIKE '%회권 지급 · 수금할 금액%'`** — grant 1tx가 남기는 로그에 금액이 박혀 있다(예: "반얀트리 프리미엄 세차 10회권 지급 · 수금할 금액 750,000원"). 5회권 400,000 / 10회권 750,000, 회차 구분은 memo 텍스트로만(`entitlement_package_instance.package_name`엔 회차수 없음). ⚠️`crm_note.created_at`은 UTC.
   - **유효 판매 판정 4조건** (그냥 crm_note를 세면 과대집계된다):
     ```sql
@@ -1342,7 +1370,7 @@ FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 |------|------|------|
 | id | int | PK |
 | user_id | int | FK → app_user.id |
-| type | varchar(25) | `VOUCHER`=1회권, `SUBSCRIPTION`=구독, `OPTION`=옵션, `PACKAGE`=패키지 |
+| type | varchar(25) | `VOUCHER`=1회권, `SUBSCRIPTION`=구독, `OPTION`=옵션, `PACKAGE`=패키지 **⚠️ PACKAGE엔 제휴 쿠폰 사용분이 섞인다 — 회권 판매 집계 전 §6c의 `COUPON_PACKAGE_REDEEM` 경고 확인** / ⚠️ NULL 존재(`IFNULL(type,'')` 비교) / ⚠️ 앱 '세차 옵션 추가' 결제는 `OPTION`이 아니라 `VOUCHER`로 저장됨 |
 | status | varchar(25) | 집계 대상: `IN ('PAID','PARTIAL_CANCELED')` |
 | amount | int | 결제금액 **⚠️ 구독/횟수권 고객 75%는 payment 없음** |
 | cancel_amount | int | 취소금액 (PARTIAL_CANCELED 시 `amount-cancel_amount`=실매출) |
