@@ -100,8 +100,19 @@ View/FirstLaunchBenefitModal → 약관 동의 → Click/FirstLaunchBenefitModal
 
 - `customXAxisLabels` (퍼널 스텝 라벨): **설정 불가**. 라벨 목록을 텍스트로 제공
 - `customSerieLabels` (세그먼트 라벨): **설정 불가**
-- 차트 publish: **불가**. 비공개로만 생성됨
+- 차트 publish: **불가**. 비공개로만 생성됨 (대시보드도 동일 — 개인 스페이스, 직접 publish 필요)
 - 세그먼트 `label` 필드: params.segments에서 설정 가능
+
+### query_dataset / eventsSegmentation 실전 노트 (2026-07-17 검증)
+- **코호트로 필터**: segments.conditions에 property 조건으로 넣는다 — `{"type":"property","group_type":"User","prop_type":"user","prop":"userdata_cohort","op":"is","values":["<코호트ID>"]}`. 테스터 제외는 같은 형식에 `"op":"is not","values":["zkv5o7ol"]`. (`{"type":"cohort",...}`는 안 먹음)
+- **interval enum**: `-3600000`=시간별, `-300000`=5분, `1`=일, `7`=주, `30`=월, `90`=분기. (3600000 같은 ms값 아님)
+- **`range:"Today"` 프리셋은 query_dataset에서 실패** ("Must specify a valid start date or range"). 오늘 하루는 명시적 `start`/`end` unix초로. (시간별 차트는 표시가 하루 경계로 스냅됨)
+- **`_active`(Any Active Event)는 이벤트명으로 group_by 불가** ("group by event type, use separate events"). 이벤트별 분해는 events 배열에 개별 이벤트를 나열해야. → "코호트의 이벤트별 raw"는 코호트→유저 클릭→User Activity 스트림으로.
+
+### 코호트 생성 (create_cohort)
+- **신규 유저(첫세션) 코호트**: definition.andClauses에 `{"type":"new_active","type_value":"new","interval":1,"time_type":"absolute","time_value":[start,end],"offset":0}`. andClauses와 orClauses(중첩배열)에 동일 clause를 넣는다. 템플릿: OOTB "New users in the last 30 days"(`pcwcyrnz`).
+- ⚠️ `new_active`는 **일(day) 단위** — 절대창 start를 03:00으로 줘도 그 날 전체 신규가 대상(시 단위 컷 불가). MCP에 cohort **삭제/수정 툴 없음** (아카이브는 UI).
+- 대시보드 아이템 `type:"cohort"`는 create_dashboard에서 거부됨 → 코호트는 rich_text에 링크로.
 
 ---
 
