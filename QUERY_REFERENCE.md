@@ -83,6 +83,11 @@ WASHED 완료 건만 세는 쿼리엔 실질적 영향 없음. CONFIRMED 포함 
 
 ⚠️ **고객 탈퇴 축(`app_user.deleted_yn`)을 빠뜨리기 쉬움.** 디테일러앱/어드민 예약목록 API(caramel-api `careplus-detailer.service.ts`)는 Prisma where에 `user:{deleted_yn:0}`(user 모델=`@@map("app_user")`)를 걸어 **탈퇴 고객 예약을 노출하지 않는다** — 특히 QA 테스트 계정(name='asdf' 등)이 탈퇴 후 CONFIRMED 예약만 잔존하는 경우가 흔함. 세차권·차량만 체크하면 이 유령이 남아 이중예약/충돌 검출에서 오탐(2026-07-21 충돌감사 크론이 김민호 동시각 2건으로 오보 — 1건은 탈퇴고객 유령).
 
+🔴 **탈퇴 고객 유령예약은 "안 보일" 뿐 슬롯은 실제로 점유한다. 그리고 zero 어드민 API로는 못 지운다 (2026-08-06 실측).**
+- **점유**: 재배정 후보를 찾을 때 `그 시각 예약 있음`으로 잡혀 멀쩡한 후보를 탈락시킨다(8/7 실사례 — 안용희170 10:00·한승헌218 16:00이 각각 탈퇴 QA 계정 예약에 막혀 있었고, 청담 10:00 대체 후보 산정이 실제로 왜곡됐다). ⟹ **§3c 후보 탐색 쿼리의 `res` CTE에도 위 3조건(특히 `app_user.deleted_yn=0`)을 걸 것.**
+- **삭제 경로**: `POST /v1/admin/users/{userId}/reservations/bulk-cancel`(zero-api)은 `assertTargetUserExists`가 먼저 걸려 **404 `고객을 찾을 수 없습니다`** 로 거부된다 — 탈퇴 유저라 어드민 화면·API 어느 쪽으로도 손댈 수 없다. **우회 = sales-admin 레거시** `POST https://gateway-prod.thetrive.com/careplus/reservations-admin/{reservationId}/cancel` `{"reason":"CARAMEL_PROBLEM","detailReason":"…"}` (userId를 안 받아 탈퇴 계정도 통과, HTTP 201 → `[{"id":…}]`). `reason` enum = `CUSTOMER_PROBLEM`(→REFUND)·`CARAMEL_PROBLEM`/`RAIN`(→GIVE_BACK_WITHOUT_CHARGE) 3종뿐이고, **테스트/정리성 취소엔 환불이 걸리지 않는 `CARAMEL_PROBLEM`**을 쓸 것.
+- **찾는 쿼리**: `JOIN app_user au ON au.id=r.user_id WHERE au.deleted_yn=1 AND r.deleted_yn=0 AND r.status IN ('CONFIRMED','IN_PROGRESS') AND r.reservation_datetime >= NOW()` — 과거 날짜인데 CONFIRMED로 남은 것도 같이 훑을 것(적재·완료율 분모를 오염시킨다).
+
 ### 2c. 완료 시각 vs 예약 시각 (washed_at vs reservation_datetime)
 
 - **`washed_at`**: 실제 세차 완료 처리 시각(UTC). 완료 건 날짜별 집계의 기준 컬럼.
@@ -1227,6 +1232,10 @@ WHERE cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르�
 | parking_info_content | text | 주차 안내 메모 |
 | deleted_yn | tinyint | 0=정상 |
 | allow_shuffle_yn | tinyint | 1=셔플 크론 리배정 허용 / **0=콘솔 "고정"(유저단위 `pinNoShuffle`). 담당자 지정 아님·수동 재배정은 가능** → §3c |
+| note | text | **디테일러앱 현재 예약 상세 "메모" 블록에 보이는 내부 지시란**(고객 미노출). 판매 약속·동반 방문 등은 여기 써야 담당자가 본다 |
+| detailer_note | text | 디테일러가 세차 완료 시 쓰는 칸. **다음 방문 이력 탭에만 렌더** → 이번 예약 지시로 쓰면 안 보인다 |
+
+🔴 **`note`/`detailer_note` 쓰기 경로 = DB UPDATE만이 아니다 (2026-08-06 실측).** sales-admin `PATCH https://gateway-prod.thetrive.com/careplus/reservations-admin/{id}` 가 `note`·`detailerNote`·`complaintYn`·`complaintReason`·`overtimeExpectedReason`를 받는다(`UpdateReservationAdminDto`, `'note' in dto` 방식이라 **보낸 키만** 갱신 → 다른 필드 안전). 알림 부작용 없음. ⟹ **prod DB 직접 UPDATE 하지 말고 이 PATCH를 쓸 것.** 단 이 API는 **덮어쓰기**이므로 기존 값이 있으면 먼저 SELECT해서 이어붙인 전문을 보낼 것.
 
 **차량 조인 (car_id 직접 없음 → reservation_car 경유):**
 ```sql
@@ -1269,6 +1278,10 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | promotion_group_id | int | 프로모션 그룹 |
 
 **테스터 제외 패턴:** `u.deleted_yn = 0 AND u.test_yn = 0 AND u.temp_yn = 0`
+
+🔴 **`phone`은 UNIQUE가 아니다 — `WHERE phone = ?` 스칼라 서브쿼리는 터진다 (2026-08-06 실측).** 재가입·탈퇴 반복으로 한 번호에 행이 쌓인다(실측 `01092828753` = **218행 중 217행 `deleted_yn=1`**). `WHERE user_id = (SELECT id FROM app_user WHERE phone='…')` 는 `Subquery returns more than 1 row`로 **에러**, `IN (...)`으로 바꾸면 이번엔 탈퇴 계정들의 옛 예약이 섞여 조용히 오답이 된다.
+- 특정 예약의 고객을 찾을 땐 **역방향**으로: `WHERE r.user_id = (SELECT user_id FROM reservation WHERE id = :rid)`.
+- 번호로 시작해야 하면 `deleted_yn=0`으로 좁히고 **그래도 여러 행이면 최신 `id`**를 쓰되, "한 사람"으로 묶는 집계는 §4b-13(`GROUP BY 전화번호`)을 따를 것.
 
 ---
 
