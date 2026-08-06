@@ -599,8 +599,11 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
 
 예외: `paused_at`, `ended_at`은 코드에서 KST(`Asia/Seoul`)로 할당 → UTC +9H 변환 불필요.
 
-**⚠️ 예외 2: `reservation.created_at`/`modified_at`은 KST 저장 (2026-07-12 실측)**
-- 같은 행에서 `reservation_datetime`은 UTC인데 `created_at`/`modified_at`은 **KST 벽시계** (MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST, 앱이 직접 쓰는 datetime=UTC — 컬럼마다 다름). CONVERT_TZ 하면 9h 틀어짐. `DATE_FORMAT`으로 뽑은 문자열이 곧 KST.
+**🔴 정정: `reservation.created_at`은 UTC다 (2026-08-06 재실측). 아래 "KST 벽시계" 서술은 틀렸다.**
+- **재실측 근거 2개.** ①`NOW()`=17:02 KST(session tz `Asia/Seoul`)일 때 `MAX(created_at)`가 `reservation`·`message`·`payment`·`user_service` **4개 테이블 전부 08:0x** = 정확히 −9h. ②`created_at` 시각 분포에서 **0–5시가 4,150/6,577 = 63.1%**(2026-05, 06·07·08월도 63~68%로 동일). 사람이 새벽에 예약을 63% 만들 리 없고, 0–5시 UTC = 09–14시 KST 업무시간이다.
+- 즉 **`+ INTERVAL 9 HOUR` 변환이 필요하다.** `DATE_FORMAT`으로 뽑은 문자열을 KST로 읽으면 9시간 어긋난다.
+- ⚠️ **이 오기가 실제로 사고를 냈다 (2026-08-06):** 티켓 러너 세션이 이 문장을 믿고 정상적인 티켓 본문(`10:38 KST`)을 `01:38 KST`로 "정정"했다. 같은 날 다른 세션은 SENS 응답의 KST `requestTime`과 19,606행 대조로 UTC임을 독립 확인했다.
+- (구 서술: "MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST라 `created_at`/`modified_at`은 KST 벽시계, 2026-07-12 실측" — 최소 2026-05 이후 데이터에선 성립하지 않는다. `modified_at`은 이번에 따로 재측정하지 않았으므로 아래 §7 "`modified_at` tz 지문" 항목은 쓰기 전에 재검증할 것.)
 - **디테일러 재배정 역추적 시그니처**: 재배정 전용 이력 테이블/로그 type은 없다. `modified_at`이 **17:00분대 = 셔플 크론(매일 17시 KST)이 detailer_id 변경**한 것, 17시대 후반(예 17:51) = 사람이 어드민에서 재배정했을 개연성 (2026-07-13 임세혁 셔플 진단 실사례).
   - 🔴 **단 "change_log엔 아예 안 남는다"는 반쪽 진술이다 — 두 경로를 함께 봐야 한다 (2026-07-27 예약 #79702 실측 교정).**
     - **고객이 날짜를 바꾸면서 디테일러도 바뀐 경우는 남는다**: `RESERVATION_DATETIME_CHANGED` row의 `data` JSON에 `fromDetailerId`/`toDetailerId`가 같이 실린다(#79702: 고객이 7/27→7/28 변경하며 78 이승제→88 강지성). **재배정 전용 `data.type`이 없어서 datetime 로그 안에 숨어 있다** — `data.type`으로 재배정을 찾으면 못 찾는다. `WHERE JSON_EXTRACT(data,'$.toDetailerId') IS NOT NULL`로 잡을 것.
