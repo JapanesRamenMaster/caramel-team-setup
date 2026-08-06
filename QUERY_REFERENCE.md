@@ -237,6 +237,10 @@ HAVING COUNT(DISTINCT ua.user_id) >= 5   -- 오탈자성 1~2건 단지 제거
 ### 2g. source_type 능동/자동 구분
 
 - **고객 직접(능동)**: `source_type IS NULL OR source_type = 'CUSTOMER_DIRECT'` — 대부분의 고객 예약 (NULL이 절대다수, 약 85%)
+- ⚠️ **`source_type IS NULL`을 곧바로 "고객 직접"으로 쓰면 안 된다 (2026-08-06 실측, DS-1830).** `booked_online_yn`으로 갈린다.
+  - NULL + `booked_online_yn=0` = **어드민 생성** (2026-06-01~ 541건, 7월 change_log 389건 전부 `ADMIN_RESERVATION_CREATED`).
+  - NULL + `booked_online_yn=1` = 5,841건(동기간). `*_RESERVATION_CREATED` change_log가 없는 경로라 **능동으로 단정 금지.**
+  - ⚠️ **`CUSTOMER_DIRECT` + `booked_online_yn=1`도 "고객이 직접 골랐다"의 증거가 아니다.** 빙의(`POST /users-admin/{id}/access-token`)와 전화 안내가 같은 지문을 만든다. 고객 자발성 판정은 **선행 이벤트(세차권 발급 등)와의 시간차**로 — 수분 이내면 CS 오케스트레이션이다.
 - **제외 대상(자동/관리자)**:
   - `CHECKOUT_SETTLEMENT`: 구독 결제 시 자동 배치 예약
   - `RAIN_RETOUCH`: 비 오는 날 재세차 자동 배정
@@ -697,6 +701,7 @@ first_sub_reservations AS (
 - 같은 zone+date에 row가 여러 개 쌓임 → `ROW_NUMBER() OVER (PARTITION BY zone_id, forecast_date ORDER BY forecasted_at DESC)` 로 dedup 필수.
 - ⚠️ **`source` 필터도 필수** — 4종 혼재: 예보=`KMA_PUBLIC_API`(probability 항상 있음)·`OPEN_METEO`, 실황=`KMA_PUBLIC_API_OBSERVED`·`OPEN_METEO_ARCHIVE`(probability NULL, amount_mm만). source 없이 dedup하면 예보/실황이 뒤섞임. 앱 우천 로직 기준 = 예보 `KMA_PUBLIC_API` + 실황 `KMA_PUBLIC_API_OBSERVED`.
 - 참고: 앱의 "비예보 표시" 판정 = `RAIN` + 확률≥50%(3일 내)/60%(이후) + 강수량≥5mm (`rain-forecast-display.policy.ts`). 리터치 신청 가능 날짜에서 비예보일·주말 제외도 이 기준.
+- ⚠️ **`reservation_retouch` 링크 부재를 "리터치가 아니다"의 근거로 쓰면 안 된다 (2026-08-06 실측, DS-1830).** 자동 리터치(`source_type='RAIN_RETOUCH'`)만 row를 만들고, **CS 수동 리터치(세차권 지급 후 예약)는 row를 아예 안 만든다** — 어드민 생성 수동 리터치 12건 전부 링크 0. 수동분 판정은 `service_id=136` + `partner_activity_log.description`(`리터치`/`우천 리터치`) + 직전 WASHED 세차 존재로.
 - ⚠️ `zone_rain_log` 테이블은 드롭됨 — `forecast_log`만 사용.
 - 경로: `reservation` → zone(polygon join, COALESCE 패턴 §2e) → `forecast_log`(zone_id + forecast_date)
 
@@ -1220,6 +1225,13 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 
 ---
 
+### reservation_change_log (예약 변경 이력, 행위자 판별용)
+컬럼은 `id·created_at·modified_at·reservation_id·actor_type·data` **6개뿐**.
+- ⚠️ **`actor_id`·`reason`·`from_status`·`to_status` 컬럼은 없다.** 전부 `data` JSON 안이다:
+  `JSON_UNQUOTE(JSON_EXTRACT(data,'$.reason'))`, `$.actorId`, `$.toStatus`.
+- 생성 사유 → 경로 매핑 (2026-07 실측): `CUSTOMER_RESERVATION_CREATED`=`CUSTOMER_DIRECT` / `CHECKOUT_SETTLED_RESERVATION_CREATED`=`CHECKOUT_SETTLEMENT` / `ADMIN_RESERVATION_CREATED`=`source_type` NULL+`booked_online_yn=0` / `ADMIN_RAIN_RETOUCH_RESERVATION_CREATED`=`RAIN_RETOUCH`.
+- 빙의로 만든 예약은 `actor_type='CUSTOMER'` + `actorId`=고객으로 남는다 → **어드민 행위를 이 컬럼으로 못 걸러낸다.**
+
 ### reservation_car
 | 컬럼 | 타입 | 설명 |
 |------|------|------|
@@ -1303,6 +1315,13 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 - **게이팅 실재**: zero-api `prisma-entitlement.repository.ts`가 사용가능 세차권을 `OR: [{ended_at: null}, {ended_at: {gte: now}}]`로 거른다. 장식 컬럼이 아니므로 "보유 세차권" 쿼리엔 만료 조건을 반드시 넣을 것.
 - **무한대 sentinel이 한 값이 아니다** (deleted_yn=0 기준 분포): `2999`=39,832 · `2027`=17,619 · `2026`=5,553 · `2029`=3,104 · **`2099`=1,613** · `2025`=1,305 · NULL=568 · `2028`=208 · **`9999`=93** · 2030/2083/2098 소량. `YEAR(ended_at)=2999`만 무한으로 처리하면 2099·9999가 실만료일로 오분류된다.
 - **발급 경로별 만료 규칙**: 어드민 지급(`POST /v1/admin/users/{id}/tickets`)·쿠폰 발급 = **정확히 3년** (`user-service-expiration.policy.ts` `ISSUED_ENTITLEMENT_VALID_YEARS=3` + `endOfSeoulDateAfterYears` → 저장값 `YYYY-MM-DD 14:59:59` UTC = KST 23:59:59). 구독 발급분은 결제주기마다 제각각.
+- ⚠️ **어드민 지급 경로가 두 개고 만료 규칙이 다르다 (2026-08-06 실측, DS-1830).**
+  - **zero** `POST /v1/admin/users/{id}/tickets` → 만료 **정확히 3년**, `product_id` 채움.
+  - **레거시** `POST /users-admin/{userId}/rewards` (sales-admin `사용권 지급` 드로어) → **운영자가 만료일을 직접 고른다. 화면 기본값이 `dayjs().add(1,'month')`** (`GrantRewardDrawer.tsx:38`)라 대부분 +30/31일로 찍힌다.
+  - **레거시 경로 지문**: `partner_activity_log_id` NOT NULL + `product_id` NULL + `paid_amount` NULL.
+    `partner_activity_log`(`action='SERVICE_ISSUED'`) 조인 → `description`에 **운영자가 쓴 메모**, `partner_id`에 지급자가 남는다. 발급 출처를 물으면 이 조인이 1순위다.
+  - ⚠️ **만료기간으로 발급 경로를 가르지 말 것** — "30일권"은 별도 경로가 아니라 화면 기본값이다. 코드 상수인지 UI 기본값인지 확인 없이 나누면 한 경로를 둘로 센다.
+  - ⚠️ 드로어의 service 드롭다운은 `comment !== 'DEPRECATED'`만 필터한다(`:28`) → **내부용 service도 CS 지급 화면에 그대로 노출된다.**
 - 🔴 **유효기간 일괄 연장 시 `ended_at < 목표일` 가드 필수** — 조건 없이 UPDATE하면 2999/2099/9999 행이 함께 걸려 **연장이 아니라 단축**이 된다.
 - 만료일 변경은 SQL 직접 UPDATE 대신 어드민 API `PATCH /v1/admin/users/{userId}/tickets/SERVICE/{ticketId}`. **전필드 덮어쓰기**(`deletedYn,endedAt,paidYn,postpaidYn,reservationId,usedYn` 전부 `.strict()`)라 빠뜨린 값은 날아간다 — 현재값을 읽어 그대로 재전송할 것.
 
