@@ -404,8 +404,8 @@ END AS car_type
 | parking_info_content | Text | YES | - | 주차 정보 |
 | requested_at | DateTime | YES | now() | 요청일 |
 | status | VarChar(25) | YES | REQUESTED | 상태 (완료: `REPORT_SENT` 또는 `WASHED`. `COMPLETED` 미사용) |
-| estimated_time | Int | YES | - | 예상 소요시간 |
-| technician | VarChar(100) | YES | - | 기술자 |
+| estimated_time | Int | YES | - | 티어·서비스에서 나온 **계획 소요분(산식)**. 🔴 실측 아님 — 실제 소요시간은 `wash_result.created_at`→`finished_at` |
+| technician | VarChar(100) | YES | - | 디테일러 **이름 문자열**(비정규화, 99.9% 채워짐). 🔴 귀속·GROUP BY는 `detailer_id`로 — 이걸로 묶으면 동명이인이 합쳐진다 |
 | detailer_id | Int | YES | - | FK → detailer |
 | washed_at | DateTime | YES | - | 세차 완료일 |
 | canceled_at | DateTime | YES | - | 취소일 |
@@ -853,7 +853,7 @@ END AS sub_type
 |------|------|-----|--------|------|
 | id | Int | NO | autoincrement | PK |
 | reservation_id | Int | NO | - | FK → reservation |
-| status | VarChar(100) | NO | CHECKUP_DASHBOARD | 현재 상태 |
+| status | VarChar(100) | NO | CHECKUP_DASHBOARD | 리포트 작성 **워크플로 단계**. 완료 = `'DONE'`(99.9%). ⚠️ BEFORE/AFTER 아님 — 그건 `wash_result_image.status` |
 | max_status | VarChar(100) | NO | CHECKUP_DASHBOARD | 최대 도달 상태 |
 | crm_type | VarChar(30) | YES | - | CRM 타입 |
 | mileage | Int | YES | - | 주행거리 |
@@ -861,7 +861,7 @@ END AS sub_type
 | tire_sizes | Json | YES | - | 타이어 사이즈 |
 | washer_fluid_yn | Boolean | YES | false | 워셔액 여부 |
 | tire_pressure_yn | Boolean | YES | false | 타이어 공기압 여부 |
-| finished_at | DateTime | YES | - | 세차 완료 시간 |
+| finished_at | DateTime | YES | - | 작업 종료 시각. 🔑 **실제 소요시간 = `created_at` → `finished_at`** (예약당 1행이라 중복 없음). 미완료 행은 NULL |
 
 **view_log 조인 시 사용:** `view_log.record_id = wash_result.id` (where `table_name = 'wash_result'`)
 

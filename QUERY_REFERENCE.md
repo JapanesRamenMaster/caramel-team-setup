@@ -386,6 +386,34 @@ GROUP BY s.detailer_id, d.name ORDER BY min_km;
 
 ---
 
+### 3e. 디테일러 생산성 — 작업 소요시간·이동 간격 (2026-08-06 실측)
+
+"1인당 하루 몇 대까지 가능한가"를 따질 때 쓰는 3종. 세 군데 다 함정이 있다.
+
+🔴 **실제 작업 소요시간의 정본은 `wash_result.created_at` → `wash_result.finished_at`이다. `reservation.estimated_time`을 쓰지 마라** — 그건 차량 티어·서비스에서 나온 **산식(계획값)**이지 측정값이 아니다. 부하 랭킹(§6b)엔 계획값이 맞지만 "실제로 몇 분 걸리나"엔 틀린다.
+
+⚠️ **`wash_result.status`는 BEFORE/AFTER가 아니다** — 리포트 작성 **워크플로 단계**이고 `'DONE'`이 완료다(2026-05~07 10,788 / 10,804 = 99.9%. 나머지는 `CHECKUP/TIRE/...`·`SUBMIT/NOTE` 등 중간에 멈춘 행). BEFORE/AFTER는 `wash_result_image.status`다(§6d). **예약당 1행**이라 소요시간 집계에 중복이 안 생기고, `finished_at IS NOT NULL`만 걸면 미완료 행은 자동으로 빠진다.
+
+🔴 **디테일러 귀속·`GROUP BY`는 `reservation.detailer_id`(FK)로. `technician`으로 묶지 마라** — `technician`은 디테일러 **이름 문자열**(비정규화)이고 99.9% 채워져 있어 그럴듯해 보이지만, 2026-05~07 구간에서 `COUNT(DISTINCT technician)` 74 vs `COUNT(DISTINCT detailer_id)` 75로 **동명이인이 한 명 합쳐진다.**
+
+🔴 **이동시간을 `LEAD` 간격으로 재지 마라 — 그건 이동이 아니라 "이동 + 유휴"다 (2026-08-06 실측, 내가 틀렸던 것).**
+연속 작업의 `LEAD` 차이는 4시간 트림 후 평균 **59.7분**(n=7,333)이라 "이동이 오래 걸린다"로 읽힌다. 그런데 실제 이동거리는 **홉당 3~5km · 하루 총 7~14km**(서울 시내 15~45분)다. **간격의 대부분은 예약 슬롯 사이 빈 시간**이지 이동이 아니다. 이걸 이동으로 읽으면 "생산성 제약 = 동선"이라는 **정반대 진단**이 나온다.
+
+**정본 = `cbr_detailer_daily_productivity_snapshot`** (디테일러·일 단위 사전집계. 이동·시간을 다 갖고 있다)
+
+| 컬럼 | 뜻 |
+|---|---|
+| `daily_total_km` / `daily_avg_km` / `daily_max_gap_km` | 하루 총 이동 / **홉당** 평균 / 최대 홉 |
+| `daily_work_minutes` | 근무 분 |
+| `daily_total_wash_minutes` / `daily_avg_wash_minutes` | 세차 총 분 / 건당 분 |
+| `washes_total`, `is_workday`, `detailer_segment`, `region` | 건수·근무일 플래그·세그먼트 |
+
+- `is_workday = 1` 필터 필수. 주간 집계는 **중앙값**(주별 편차가 크다 — 2026-07 주간 세차수 2.18~4.22대).
+- 🔑 **가동 판정식 = `daily_work_minutes − daily_total_wash_minutes` (여유분).** 2026-07-26주 실측: 근무 467분 · 세차 274분 · **여유 192분** · 세차시간 비중 58.8%. 여유의 대부분이 유휴라 **제약은 동선이 아니라 배정량(수요 밀도)**이다.
+- `LEAD` 간격은 여전히 쓸모가 있다 — 단 이름을 **"작업 간 간격"**으로 부르고 이동시간이라 부르지 말 것. 음수(기록 겹침, 20건)는 `>= 0`으로 제외.
+
+---
+
 ## 4. 검증 기준 (Invariant)
 
 분석 결과가 아래를 위반하면 쿼리 로직에 버그가 있는 것:
@@ -1225,6 +1253,8 @@ WHERE cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르�
 | status | varchar(25) | 완료: `WASHED` / `REPORT_SENT`. `COMPLETED` 미사용 |
 | user_id | int | FK → app_user.id |
 | detailer_id | int | FK → detailer.id |
+| technician | varchar | 디테일러 **이름 문자열**(비정규화, 99.9% 채워짐). 🔴 귀속·`GROUP BY`는 `detailer_id`로 — 이걸로 묶으면 **동명이인이 합쳐진다** → §3e |
+| estimated_time | int | 티어·서비스에서 나온 **산식(계획 소요분)**. 🔴 실제 소요시간 아님 — 실측은 `wash_result.created_at`→`finished_at` → §3e |
 | address_id | int | FK → user_address.id |
 | subscription_id | int | **98% NULL — 구독 여부 판단에 사용 불가** |
 | location | text | 주소 문자열 |
