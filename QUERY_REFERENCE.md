@@ -777,14 +777,25 @@ first_sub_reservations AS (
 - ⚠️ **`slot_id`(→`detailer_slot`)는 데드 데이터 (2026-07-13 확정).** 슬롯 생성 경로에서 안 읽힘 — slot_id를 바꾸거나 `detailer_slot`을 INSERT해도 실제 노출 슬롯 시각엔 무영향. 반얀 세팅 시 관례로 채우긴 하나(김형현·손정민 slot 3), 시각을 결정하는 건 slot_id가 아니라 **상수 그리드 ∩ rule 윈도우**다. 슬롯 조사에서 이 테이블 보지 말 것.
 - 반얀 상주 디테일러 N명 = 슬롯당 캐파 N배 (slot_id 때문이 아니라 같은 시각대에 N명이 서빙).
 - **기간 파견 패턴 = 스케줄 3토막**: ①기존 스케줄 `effective_to` 단축 ②파견 스케줄(기간 한정) INSERT ③복귀 스케줄(파견 종료 익일~영구) INSERT. ③을 빼먹으면 파견 종료 후 배정 공백.
+- 🔴 **스케줄 무효화 관례 = `effective_from = effective_to` (2026-08-06 실측).** 파견 중 원존 차단 등에서 행을 지우지 않고 길이 0으로 눌러둔다(염철림165 sched 786 = `2026-08-06 15:00` 양쪽 동일). ⟹ **effective 판정은 반드시 `effective_from < X AND effective_to > X` (양쪽 strict)**. `BETWEEN`이나 `effective_to >= X`로 쓰면 무효화된 스케줄이 근무 중으로 잡힌다(위 §슬롯/근무 예시 중 `BETWEEN`·`effective_to >= 'D일 00:00:00'` 형태는 이 관례 이전 것이니 그대로 복사하지 말 것). 무효화 결과 그날 어떤 type의 스케줄도 없으면 슬롯 0 · work-day API `blocks: []`.
+  - ⚠️ **파견 일정이 뒤로 밀리면 무효화가 남아 공백이 된다** — 염철림은 원존 차단으로 786을 눌렀는데 반얀 파견이 8/10~8/11로 미뤄져 **8/7~8/9 사흘간 아무 스케줄도 없는** 상태가 됐다. 파견 일정 변경 시 무효화 행을 되돌렸는지 함께 확인할 것.
 
 **detailer_holiday 처리**
 - 단기(≤7일) full-day (`from ≤ 당일 00:00` AND `to ≥ 익일 00:00`) → 실제 off
-- 장기(>7일) → capacity 집계에선 무시 (파견/퇴사 등 운영 메모)
+- 장기(>7일) → capacity 집계에선 무시 (파견/퇴사 등 운영 메모). ⚠️ **단 `memo`에 `퇴사`·`하차`·`출격보류`가 들어간 장기 row는 예외 — 실질 비가용인데 `booking_yn=1`로 남아 있는 경우가 있다**(김승규190 `퇴사 예정` 2026-08-05~12-30, 2026-08-06 실측). 인계·재배정 후보 선정에선 장기라도 배제할 것.
 - 부분 시간 → 겹치는 슬롯만 차감. ⚠️ **매일 반복되는 4시간짜리 부분 블록이 수개월분 선삽입돼 있는 경우가 있다**(memo `셀원 품질 점검` = UTC 05:00~09:00 = KST 14~18시, 황석찬114에 4~8월분). 하루 겹침 COUNT로 "휴무"를 세면 오전 근무 가능자가 통째로 탈락 → **`TIMESTAMPDIFF(HOUR, from, to) > 8`로 종일/부분을 갈라** 종일만 종일 탈락시킬 것(§3c 항목 4).
 - `v_detailer_holiday_daily` 뷰 한계 있음 — capacity 쿼리에서는 `detailer_holiday` 직접 조회 권장
 - 🔴 **공휴일·전사휴무 캘린더 테이블은 없다 — `detailer_holiday`에 디테일러 1인당 1행으로 깔려 있다** (2026-07-29 확인). memo 규칙 `[전사휴무]<휴일명>`(예 `[전사휴무]대체휴일(광복절)` = 2026-08-17, 101행 종일 `(D-1) 15:00 ~ D 15:00`). ⟹ ①"그날 회사가 쉬는 날인가"는 `WHERE memo LIKE '[전사휴무]%'` 분포로 판별할 것 — 예약/슬롯 0건을 "수요 없음"이나 데이터 누락으로 오독하기 쉽다 ②**그 휴일에 0분(`from`=`to`) row인 사람 = 그날 예외적으로 일하는 사람**(반얀 단독 파견 등). 즉 0분 row는 무력화 표시일 뿐 아니라 "이 사람만 출근"의 시그널이다.
 - ⚠️ **"왜 슬롯에 안 뜨나" 진단에선 반대 — 휴무는 길이 무관 하드 차단** (2026-07-13). 플래그(booking_yn 등)·스케줄·rule이 다 정상이어도 해당 날짜에 holiday row 있으면 노출 0. 운영이 파견/별동대를 **매일 full-day 휴무 bulk INSERT**로 마킹하는 패턴이 있으니(같은 created_at·memo 예 "정비별동대") 미노출 진단 시 `memo` 확인 필수.
+
+**🔴 슬롯을 실제로 닫는 유일한 레버 = `detailer_holiday` 부분블록 INSERT (2026-08-05 실행·검증)**
+- 특정 디테일러의 슬롯 1~2칸만 즉시 막을 때(개인 사유 외출 등): ``INSERT INTO detailer_holiday (detailer_id, `from`, `to`, memo)`` **4컬럼만**. 값은 **UTC**(KST−9h).
+- ⛔ **rule `start_time`/`end_time` 축소로 근무창을 줄이려 하지 말 것** — DB엔 반영되는데 **prod 슬롯 API가 계속 옛 창을 반환**(2026-07-31 실측, 원인 미확정). 즉시 움직이는 건 holiday뿐.
+- ⚠️ **`holiday_date`/`start_time`/`end_time`(prod 실존, DB_SCHEMA 표엔 누락)에 시각을 넣지 말 것** — 슬롯 경로가 안 읽는다. NULL로 둬도 정상 동작하고 `from`/`to`가 정본. 컬럼명만 보고 여기 `08:00`~`12:00`을 넣으면 조용히 무효.
+- 🔑 **휴무 끝을 다음 그리드 시각과 정확히 같게 두면 그 칸만 죽는다** — 길이 0 FREE는 생성되지 않아 인접 칸은 보존된다. 예) 08·10시만 막고 12시 유지 = `from` KST 08:00 / `to` KST 12:00.
+- **휴무는 신규 접수만 막고 기존 CONFIRMED 예약은 남는다** → 그 시각에 예약이 이미 있으면 재배정·연락이 별도로 필요.
+- **검증 = 무인증** `GET https://api-prod.thetrive.com/v1/scheduling/detailers/{id}/work-day?addressId={addrId}&fromDate=&toDate=` → 해당 구간 `HOLIDAY` 전환 + **다음날 정상 FREE** 둘 다 확인. ⚠️ 블록 타입 키는 `type`이 아니라 **`kind`**(`FREE`/`HOLIDAY`/`RESERVATION`), 근무 없는 날은 `blocks: []`.
+- 롤백 = 그 row DELETE 또는 `to`=`from`(위 무력화 관례).
 
 **예약↔근무스케줄 정합성 감사 패턴 (2026-07-19, 반얀 재배정 사고 전수조사)**
 - 재배정/파견 후 "예약이 디테일러 근무 밖에 배정됐나" 검증은 3축: ①근무윈도우 밖 = `reservation` × `NOT EXISTS`(rule 윈도우 매칭) ②휴무 겹침 ③동시각 이중배정 = `GROUP BY detailer_id, reservation_datetime HAVING COUNT(*)>1`.
@@ -795,6 +806,7 @@ first_sub_reservations AS (
 **재배정을 직접 실행할 때 — 대상 사전검증 필수 (2026-07-24)**
 - 재배정 API(sales-admin `PUT /careplus/reservations-admin/{id}/schedule`, zero-api admin `PATCH`)는 대상 디테일러의 **근무시간·휴무·현직/퇴사를 전혀 검증 안 함** (`checkScheduleConflict`=같은 디테일러 동일시각 겹침만, `skipConflictCheckYn=true`면 그마저 스킵). 검증은 고객 슬롯조회 경로(`findActiveDetailers`)에만 있음 → **API 성공 ≠ 실제 가용.**
 - ⟹ 재배정 대상을 고를 땐 아래를 **직접** 걸 것: ①Active 4조건(§3a: `booking_yn=1·retired_yn=0·deleted_yn=0·direct_yn=1`) ②출장 재배정이면 `supply_sheet.region <> '오토랩'`(고정샵은 필드 안 돎) ③대상 시각이 `detailer_holiday`(부분휴무 포함, from~to 둘 다 UTC 직접비교) 안에 없음 ④그 시각 겹치는 CONFIRMED 예약 없음 ⑤더미 `132/125/168` 제외.
+- 🔴 **"그날 예약 0건 = 여유 있음"이 아니다 (2026-08-06 실측).** 2026-08-07 예약 0건인 디테일러 8명 중 7명이 연차·퇴사예정이었다(한홍구·김승규·남경우·김민호·김남용·장태훈·이승제). 건수로 인계처를 고르면 **가장 안 되는 사람만 뽑힌다.** 후보는 위 ①~⑤ + effective 스케줄 존재를 먼저 통과시킨 뒤 건수로 정렬할 것.
 - ⚠️ **실제 테이블명은 `detailer_supply_sheet`** (문서·구두로 "supply_sheet"라 부르지만 `SHOW TABLES LIKE '%supply%'`엔 `detailer_supply_sheet`·`detailer_supply_load_log`·`detailer_supply_weekly_snapshot`뿐). 유용 컬럼: `name`·`status`·`cell_name`(셀장)·`region`(Z번호)·`phone_norm`·**`home_address`(자택, 디테일러 출퇴근 동선 판단용)**·`car_plate`·`work_start_date`. ⚠️ `name`·`phone_norm` 비교 시에도 **`COLLATE utf8mb4_general_ci` 양쪽에 붙일 것** — 안 붙이면 `Illegal mix of collations`로 죽는다.
 - 현직 판별: `detailer_supply_sheet.status='현직'`이 정본(퇴사/하차/삭제/교육중 제외). ⚠️ `detailer.retired_yn`은 미신뢰 — 실제 퇴사자도 0인 경우 있음(주진우147, retired_yn=0인데 booking_yn=0·supply_sheet 퇴사). `booking_yn=0`이 실질 비활성 시그널. supply_sheet 조인=phone `REPLACE(phone,'-','') COLLATE utf8mb4_general_ci`, `status IS NULL`=로스터 누락(퇴사 아님, 확인 필요).
 - ⚠️ **반얀 파견 예외**: 반얀 파견 디테일러(`detailer_work_schedule.type LIKE 'BANYAN%'`, 예 `BANYAN_TREE_EXTENDED`)는 정상근무 차단용 **종일 휴무**가 걸려도 그날 배정된 **반얀 예약(장충단로 60)은 본인 담당** → 휴무충돌 감사·재배정 대상에서 제외(2026-07-24 이형준161 사례).
@@ -1308,6 +1320,18 @@ LEFT JOIN (
 LEFT JOIN service s ON s.id = us.service_id
 -- s.name 예시: '외부만', '외부 + 내부', '[리터치] 외부만'
 ```
+
+---
+
+### user_option (예약-옵션 연결) (2026-08-06 실측)
+옵션(내부세차 추가·왁스·살균 등)은 **`user_service`가 아니라 `user_option`**. 옵션 마스터는 `options`(복수형, `option` 아님).
+
+- **"결제한 옵션이 그 예약에 반영됐나" 판정 = `user_option`에 `reservation_id=<예약> AND paid_yn=1 AND used_yn=1 AND deleted_yn=0` row 존재.** `user_service`에서 옵션 row를 찾으면 영영 못 찾는다.
+- 🔴 **`paid_yn=1` + `used_yn=0` + `reservation_id` 있음 = 미반영 버그 상태.** 디테일러 앱 예약상세 API(`prisma-detailer-reservation.repository.ts`)가 `reservation_id=X AND used_yn=1`인 옵션만 조회하므로, 결제는 됐는데 디테일러에게는 안 보인다. (2026-08-06 예약 #83490 CS 실사례)
+  - 원인: 옵션 결제 정산을 레거시 caramel-api와 zero-api가 경합한다. `cart.metadata.autoUseOptions` → `used_yn=1` 후처리는 **레거시에만** 있고, zero-api가 먼저 `payment.status='PAID'`로 바꾸면 레거시가 멱등 early-return 해서 후처리를 통째로 스킵한다. 빈도는 월 1~3건.
+  - 잔존 건 탐지: `WHERE paid_yn=1 AND used_yn=0 AND reservation_id IS NOT NULL AND deleted_yn=0` + 예약 status 미완료.
+- **어느 서버가 그 row를 썼는지 판별 = `modified_at` tz 지문** (다른 테이블에도 적용 가능): `modified_at`이 `ON UPDATE CURRENT_TIMESTAMP`(서버 tz=**KST**)인 테이블에서, 레거시 caramel-api처럼 `modified_at`을 안 넘기는 writer가 쓰면 **KST 벽시계**로 찍히고, zero-api처럼 Prisma가 `modified_at: new Date()`를 명시하는 writer가 쓰면 **UTC**로 찍힌다. `created_at`(UTC)과 대조해 **+9h면 레거시, 같은 tz면 zero-api**. 로그 없이 writer를 특정할 수 있는 거의 유일한 단서.
+- 옵션 단건 추가 결제는 `payment.type='OPTION'`이 아니라 **`VOUCHER`**, `metadata.pathname='/payment/options'`·`metadata.autoUseOptions=true` (§7 payment 참조).
 
 ---
 
