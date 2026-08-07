@@ -270,7 +270,15 @@ SELECT id, DATE_FORMAT(CONVERT_TZ(reservation_datetime,'+00:00','+09:00'),'%Y-%m
 디테일러가 실수로 "세차 시작"을 누른 예약을 세차 전으로 돌릴 때. `POST /v1/detailer/reservations/:id/start`(zero `prisma-detailer-reservation.repository.ts startReservation`)는 한 트랜잭션에서 **①`reservation.status='IN_PROGRESS'` ②`reservation_status_log` 1행 ③`wash_result` 1행 ④`checkup` 1행**을 만든다.
 
 - 🔴 **`startReservation`은 살아있는 `wash_result` + `checkup`이 둘 다 있으면 그걸 그대로 반환하고 status를 건드리지 않고 조기 리턴한다.** 그래서 status만 `CONFIRMED`로 되돌리면 **디테일러가 버튼을 다시 눌러도 IN_PROGRESS로 안 돌아온다**. 디테일러앱도 `!washResult && status !== 'IN_PROGRESS'`일 때만 시작 모달을 띄우고(`ReservationDetailScreen.tsx`) 아니면 세차 화면으로 직행.
-- 되돌리기 = status + `wash_result.deleted_yn=1` + `checkup.deleted_at=NOW()` **3행 세트**(코드가 `markNoShow` 되돌릴 때 쓰는 soft delete + 로그 append와 동일 방식). 어드민 `PATCH /v1/admin/users/:userId/reservations/:id`는 status만 바꾸므로 **단독으로는 반쪽 조치**.
+- 🔴 **soft delete로는 안 된다 — `checkup.reservation_id`가 UNIQUE(`checkup_reservation_id_key`)다.** 코드는 `checkup.deleted_at`을 찍고 같은 예약으로 `create`를 시도하므로 **soft delete된 checkup이 남아 있으면 재시작이 UNIQUE 위반으로 터진다**(코드 버그. `wash_result.reservation_id`는 일반 KEY라 중복 허용). ⟹ **되돌리기는 실제 `DELETE`.**
+  ```sql
+  DELETE FROM checkup     WHERE id=?;   -- 자식 checkup_detail 0건 확인 후
+  DELETE FROM wash_result WHERE id=?;   -- 자식 wash_result_image/audio/report/wcc 0건 확인 후
+  UPDATE reservation SET status='CONFIRMED' WHERE id=? AND status='IN_PROGRESS';
+  INSERT INTO reservation_status_log (reservation_id, status) VALUES (?,'CONFIRMED');
+  ```
+  어드민 `PATCH /v1/admin/users/:userId/reservations/:id`는 status만 바꾸므로 **단독으로는 반쪽 조치**.
+- ⚠️ **`reservation_status_log`에 손으로 INSERT하면 tz가 어긋난다.** 이 테이블은 Prisma가 `created_at`/`modified_at`을 둘 다 **UTC로 명시 세팅**하는데, 컬럼 DEFAULT `CURRENT_TIMESTAMP`는 서버 tz(KST)라 raw INSERT는 형제 행보다 **9시간 미래**로 박힌다. INSERT 후 `SET created_at=DATE_SUB(created_at, INTERVAL 9 HOUR), modified_at=created_at`으로 맞출 것(같은 UPDATE 안에서 `modified_at`을 `DATE_SUB(created_at,...)`으로 쓰면 이미 갱신된 created_at을 참조해 **또 −9h** 되므로 두 문장으로 나눠라).
 - 진행분 확인 후 실행: `wash_result.status`가 초기값(`CHECKUP/TIRE/DRIVER_FRONT`)이고 `wash_result_image` 0장이면 잃을 데이터 없음. 사진이 있으면 이미 진행된 것이므로 되돌리기 전에 확인.
 ```sql
 SELECT r.status, wr.id wr_id, wr.status wr_status, wr.deleted_yn,
