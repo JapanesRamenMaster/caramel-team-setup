@@ -265,6 +265,23 @@ SELECT id, DATE_FORMAT(CONVERT_TZ(reservation_datetime,'+00:00','+09:00'),'%Y-%m
 ```
 - 처리는 어드민 API `bulk-cancel` + `ticketAction: GIVE_BACK`(세차권 반환, §5c 재발급 메커니즘 참고). DB 직접 UPDATE 금지.
 
+### 2i. "세차 시작 오조작" 되돌리기 = 3행 세트. status만 바꾸면 재시작이 안 된다 (2026-08-07 실측)
+
+디테일러가 실수로 "세차 시작"을 누른 예약을 세차 전으로 돌릴 때. `POST /v1/detailer/reservations/:id/start`(zero `prisma-detailer-reservation.repository.ts startReservation`)는 한 트랜잭션에서 **①`reservation.status='IN_PROGRESS'` ②`reservation_status_log` 1행 ③`wash_result` 1행 ④`checkup` 1행**을 만든다.
+
+- 🔴 **`startReservation`은 살아있는 `wash_result` + `checkup`이 둘 다 있으면 그걸 그대로 반환하고 status를 건드리지 않고 조기 리턴한다.** 그래서 status만 `CONFIRMED`로 되돌리면 **디테일러가 버튼을 다시 눌러도 IN_PROGRESS로 안 돌아온다**. 디테일러앱도 `!washResult && status !== 'IN_PROGRESS'`일 때만 시작 모달을 띄우고(`ReservationDetailScreen.tsx`) 아니면 세차 화면으로 직행.
+- 되돌리기 = status + `wash_result.deleted_yn=1` + `checkup.deleted_at=NOW()` **3행 세트**(코드가 `markNoShow` 되돌릴 때 쓰는 soft delete + 로그 append와 동일 방식). 어드민 `PATCH /v1/admin/users/:userId/reservations/:id`는 status만 바꾸므로 **단독으로는 반쪽 조치**.
+- 진행분 확인 후 실행: `wash_result.status`가 초기값(`CHECKUP/TIRE/DRIVER_FRONT`)이고 `wash_result_image` 0장이면 잃을 데이터 없음. 사진이 있으면 이미 진행된 것이므로 되돌리기 전에 확인.
+```sql
+SELECT r.status, wr.id wr_id, wr.status wr_status, wr.deleted_yn,
+       ch.id ch_id, ch.deleted_at, (SELECT COUNT(*) FROM wash_result_image WHERE wash_result_id=wr.id) imgs
+FROM reservation r
+LEFT JOIN wash_result wr ON wr.reservation_id=r.id AND wr.deleted_yn=0
+LEFT JOIN checkup ch ON ch.reservation_id=r.id AND ch.deleted_at IS NULL
+WHERE r.id=?;
+```
+- 시작 시각 지문 = `wash_result.created_at`(=`checkup.created_at`, 초까지 동일). `reservation_change_log`엔 **IN_PROGRESS 전환이 안 남는다** — 상태 이력은 `reservation_status_log`를 봐야 한다.
+
 ---
 
 ## 3. 디테일러 쿼리 필수 패턴
@@ -277,7 +294,21 @@ SELECT id, DATE_FORMAT(CONVERT_TZ(reservation_datetime,'+00:00','+09:00'),'%Y-%m
 - `detailer.name != '이상민'` (테스트 계정)
 - `detailer.id != 159` (성지원, supply_sheet 미등록 테스터)
 
-참고: `detailer_supply_sheet.status = '현직'`은 40명, Grafana 기준(위 조건)은 60명 — **Grafana 기준 사용할 것**
+참고: `detailer_supply_sheet.status = '현직'`은 40명, Grafana 기준(위 조건)은 **65명**(2026-08-07 실측, 구 문서값 60명은 stale) — **Grafana 기준 사용할 것**
+
+🔴 **"디테일러 몇 명"은 층이 3개다. 숫자만 쓰면 재현이 안 된다 (2026-08-07 실측).** 같은 날 같은 DB에서:
+
+| 층 | 조건 | 인원 |
+|---|---|---|
+| 미퇴사 | `deleted_yn=0 AND retired_yn=0` | 129명 |
+| **예약 가능 (§3a 4조건)** | + `booking_yn=1 AND direct_yn=1` | **65명** |
+| **구역 배정 (§3a ∩ §3b 체인)** | + 현재 유효 `work_schedule` × `rule.zone_id` | **53명** (13개 구역) |
+
+- **외부(IR·팀 공유)에 "직영 디테일러 N명"으로 쓰는 값은 구역 배정 층**이다 — 실제로 고객 차를 받는 사람 수이고, 구역별 명단·사진과 개수가 맞는 유일한 층. IR 덱의 "62명"은 **어느 층으로도 재현되지 않아** 폐기했다(2026-08-07).
+- `direct_yn=1`을 빼면 66명이 된다. 차이 1명은 구역 배정이 없어서 **구역 배정 층에는 영향이 없다** — 그래서 direct_yn 누락은 조용히 통과한다. 인원 수를 보고할 땐 4조건을 다 걸고 층을 명시할 것.
+- 층별 인원은 계속 바뀐다. **숫자를 인용하지 말고 층 정의를 인용하고 매번 재측정한다.**
+
+`detailer.profile_image` = 프로필 사진 URL(전원 보유 수준). 호스트가 `cdn.thetrive.com`과 `trive-attachment.s3...` 두 갈래이고 **S3 쪽은 경로에 한글이 percent-encoding**되어 있다 — 내려받을 땐 `urllib.parse.quote(url, safe=':/')`로 감싸야 404가 안 난다.
 
 **파견 디테일러**: `supply_sheet.status='파견'` 기준 (현재 7명). 대부분 work_schedule_rule 없음 (15명 중 13명).
 - capacity 쿼리, "근무 디테일러수" 메트릭 모두 UNION으로 합산 (= 워크 발생 디테일러 ∪ 현재 파견자)
