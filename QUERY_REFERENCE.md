@@ -1285,14 +1285,26 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 
 - **컬럼 의미**: 수신자=`customer_id`(→`app_user.id`, ⚠️ `user_id` 아님), 발송시각=`created_at`(UTC), 채널=`lms_type`(`ALIMTALK`/`PUSH`/`MMS`/`SMS`/`LMS`), 캠페인 식별=`type`(varchar 200, 예 `reservationGuide002`·`firstWash_expire`), 발송상태=`status`(기본 `REQUESTED`).
 - ⚠️ **`sent_yn` 함정**: **ALIMTALK은 발송돼도 `sent_yn=0`·`status='REQUESTED'` 고정**(PUSH만 `sent_yn=1`). `sent_yn=1`로 필터하면 알림톡이 통째 누락된다. **행 존재 = 발송요청**으로 집계(도달 확정 아님 — BizM 도달 콜백 미반영).
+- 🔴 **단, 위 `sent_yn` 함정은 레거시 CRM 경로 한정이다 — zero-api signal 경로에는 정반대로 적용된다 (2026-08-10 실측).** 두 경로는 **`tracking_key` 모양**으로 갈린다: **semantic key**(`wash-start-91024`·`wash-complete-{id}`·`reservation-info-detailer-{id}`·`reservation-cancel-{id}`) = zero-api signal / **랜덤 8자**(`02c2XFru`)·NULL = 레거시 CRM. signal 경로는 `sent_yn=1`+`status='success'`가 정상이고 **`sent_yn`이 실제 성공 여부를 담는다** (최근 30일 semantic key ALIMTALK: success 19,063 / **fail 465는 `sent_yn=0`**). ⟹ **signal 경로에 "행 존재 = 발송"을 쓰면 실패분까지 발송으로 센다.** 경로를 먼저 가르고 술어를 고를 것. (실사용: 세차 시작 알림 `wash-start-*` 2,462건은 100% `sent_yn=1`+`success`.)
+- ⚠️ **`message`에 `message_group`·`group_name` 컬럼은 없다** — 템플릿 구분은 `type`(`washStart003`·`washCompleted006` 등). 쓰면 `Unknown column`.
 - 채널은 `type`별로 대체로 고정(윈백·구독갱신·자동예약=ALIMTALK, 쿠폰만료는 알림톡/푸시가 별도 `type`).
 - 🔴 **`reservation_id`는 대체로 NULL이다 — 예약 통지 이력을 `reservation_id`로 찾으면 "안 나갔다"는 오답이 나온다** (2026-07-26 실측: 당일 `reservationUpcoming003` **216건 전부 NULL**). **예약 통지 조회 = `WHERE customer_id = :app_user_id AND created_at >= :당일`** 로. `reservation_id`가 채워지는 type도 일부 있으니(`RESERVATION_INFO_DETAILER` 등) 둘 다 확인.
+  - 🔴 **zero-api signal 경로는 `tracking_key = '<이벤트>-<reservationId>'`가 정본 조회 경로다 (2026-08-10 실측).** 여기도 `reservation_id`는 NULL이다(`wash-start-91024`·`wash-start-91543` 둘 다). 위 `customer_id` 방식은 레거시용이고, signal 경로는 tracking_key가 **고객 단위가 아니라 예약 단위로 바로 잡혀** 훨씬 정확하다. 예: `WHERE tracking_key = CONCAT('wash-start-', r.id) AND sent_yn = 1`. 코드측 생성기는 caramel-zero `reservation-notification.port.ts`의 `buildWashStartTrackingKey` 등.
 - **D-1 예약확인 알림톡 `reservationUpcoming003` = 매일 18:00 KST 발송, 본문에 담당 디테일러 실명이 들어간다** (`message.message` JSON → `request.msg`: "안녕하세요 고객님, 내일 세차를 담당할 **{디테일러명}**입니다…" + 예약시간·방문장소). ⟹ **재배정 판단 시 "고객이 이미 이 이름을 봤는가"의 판정 근거**(§3c 항목 6). 본문 확인은 `SUBSTRING(m.message,1,150)`으로 충분.
   - 🔴 **발송시각 09:00은 오답이다 (2026-08-06 교정).** 최근 11일 전수(`GROUP BY 날짜, MIN(created_at)`) **전부 18:00 KST**. 이걸 09:00으로 알고 있으면 **재배정 시한을 반나절 잘못 잡는다** — "오전에 이미 이름이 나갔으니 늦었다"고 포기하거나, 반대로 "내일 아침까지 여유 있다"고 오판한다(실사례: 8/7 존 외 예약 조율에서 시한을 "내일 07:00"으로 잘못 보고했다가 정정).
   - ⚠️ **결번이 있다** — 주말 외에도 안 나가는 날이 섞인다(7/31·8/1 0건). "오늘 아직 없다"를 곧바로 "장애"로 읽지 말고 **당일 18:00 이전인지부터 확인**할 것.
   - **당일 07:00 `parkingInfo001`(주차위치 안내)에도 디테일러 이름·연락처·차량번호가 들어간다** — 통지 노출 시점은 D-1 18:00과 D-day 07:00 **두 번**이다.
 - 🔴 **`message.message`의 `request` JSON은 구/신 2종이 혼재한다 — `request.msg`로만 뽑으면 신규분이 통째로 NULL이다 (2026-08-06 실측).** 구=`{msg, phn, tmplId, title, …}`(알림톡 레거시 경로) / 신=`{content, recipient, channel, metadata, trackingKey, …}`. 최근 30일 기준 `tmplId` NULL이 32,366건으로 **최대 그룹**인데 이건 "템플릿 없음"이 아니라 **신규 스키마라 그 키가 없는 것**이다. 본문·템플릿 조회는 `COALESCE(JSON_UNQUOTE(JSON_EXTRACT(message,'$.request.msg')), JSON_UNQUOTE(JSON_EXTRACT(message,'$.request.content')))` 처럼 **양쪽을 함께** 볼 것. 수신번호도 `request.phn`(구) vs `request.recipient`(신)로 갈린다.
 - **CRM 7일 예약전환 측정**: received(테스터 제외 live_users §5b) → 발송 후 7일 내 `reservation` 생성(`r.user_id = m.customer_id`, `r.created_at` 기준, `r.deleted_yn=0`. raw·비인과). `(customer_id, type)`별 첫 발송 dedup. 상세·재현쿼리 = caramel-api `docs/superpowers/specs/2026-06-30-crm-kill-keep-map.md` §2/§6.
+- **세차 시작 되돌리기(cancel-start) 이벤트 지문 = `reservation_status_log`에서 같은 예약의 `IN_PROGRESS` 뒤에 오는 `CONFIRMED`** (2026-08-10). 전용 로그 테이블은 없다. 한 예약에 여러 번 찍힐 수 있다(시작→되돌림→재시작→되돌림).
+  ```sql
+  SELECT l.reservation_id, l.created_at
+  FROM reservation_status_log l
+  WHERE l.status = 'CONFIRMED'
+    AND EXISTS (SELECT 1 FROM reservation_status_log p
+                WHERE p.reservation_id = l.reservation_id
+                  AND p.status = 'IN_PROGRESS' AND p.id < l.id)
+  ```
 
 ### 6h. 050 안심번호/통화 (`telephony_call_log`·`customer_vno`) (2026-07-16)
 
