@@ -165,11 +165,14 @@ memo가 비어 있거나 이 표에 없으면 **추측하지 말고 사용자에
 
 ### 1-6. 고객이 이미 담당자 이름을 봤는지 확인
 
-D-1 09:00 KST에 나가는 알림톡 본문에 **"내일 세차를 담당할 OOO입니다"**가 들어간다. 이미 나갔으면 고객이 본 이름이 바뀌는 것이므로 **문자에 기존 담당자를 함께 써야 한다**(6단계).
+담당자 실명이 고객에게 노출되는 시점은 **두 번**이다 — **D-1 18:00 KST `reservationUpcoming003`**("내일 세차를 담당할 OOO입니다")과 **당일 07:00 KST `parkingInfo001`**(디테일러 이름·연락처). 이미 나갔으면 고객이 본 이름이 바뀌는 것이므로 **문자에 기존 담당자를 함께 써야 한다**(6단계).
+
+🔴 **D-1 발송을 09:00으로 알고 있으면 시한을 반나절 잘못 잡는다**(정본: `QUERY_REFERENCE.md` §6g, 2026-08-06 전수 교정). 오후에 재배정하면서 "이미 아침에 나갔다"고 포기하지 말 것 — 18:00 전이면 아직 안 나갔다.
 
 ```sql
-SELECT id, DATE_FORMAT(DATE_ADD(created_at, INTERVAL 9 HOUR),'%m-%d %H:%i') sent_kst,
-       SUBSTRING(JSON_UNQUOTE(JSON_EXTRACT(message,'$.request.msg')),1,150) body
+SELECT id, type, DATE_FORMAT(DATE_ADD(created_at, INTERVAL 9 HOUR),'%m-%d %H:%i') sent_kst,
+       SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(message,'$.request.msg')),
+                          JSON_UNQUOTE(JSON_EXTRACT(message,'$.request.content'))),1,150) body
 FROM message
 WHERE customer_id = :user_id
   AND created_at >= DATE_SUB(':prev 15:00:00', INTERVAL 2 DAY)
@@ -177,6 +180,8 @@ ORDER BY id DESC LIMIT 10;
 ```
 
 ⚠️ `message`에는 `user_id` 컬럼이 없다(`customer_id` = `app_user.id`, 쿼리 A의 `user_id`). D-1 알림톡은 `reservation_id`를 채우지 않으므로 고객 기준으로 조회한다. **`created_at`은 UTC 저장**이므로 KST로 보려면 위처럼 `+9h`.
+
+🔴 **본문은 `$.request.msg` 단독으로 뽑지 말 것 — 신규 발송 경로는 `$.request.content`라 `msg`로만 보면 body가 NULL로 나온다.** 판별 키는 `$.request.channel`: `KAKAO`·`MMS`·`PUSH`(신규)는 `content` 100%, `channel` NULL(레거시)만 `msg`를 쓴다(2026-08 전수). **NULL을 "발송 안 됨"으로 읽으면 오답** — 발송 여부는 row 존재와 `sent_kst`로 판정한다.
 
 ---
 

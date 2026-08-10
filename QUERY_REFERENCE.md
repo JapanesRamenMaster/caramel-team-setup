@@ -1295,6 +1295,7 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
   - ⚠️ **결번이 있다** — 주말 외에도 안 나가는 날이 섞인다(7/31·8/1 0건). "오늘 아직 없다"를 곧바로 "장애"로 읽지 말고 **당일 18:00 이전인지부터 확인**할 것.
   - **당일 07:00 `parkingInfo001`(주차위치 안내)에도 디테일러 이름·연락처·차량번호가 들어간다** — 통지 노출 시점은 D-1 18:00과 D-day 07:00 **두 번**이다.
 - 🔴 **`message.message`의 `request` JSON은 구/신 2종이 혼재한다 — `request.msg`로만 뽑으면 신규분이 통째로 NULL이다 (2026-08-06 실측).** 구=`{msg, phn, tmplId, title, …}`(알림톡 레거시 경로) / 신=`{content, recipient, channel, metadata, trackingKey, …}`. 최근 30일 기준 `tmplId` NULL이 32,366건으로 **최대 그룹**인데 이건 "템플릿 없음"이 아니라 **신규 스키마라 그 키가 없는 것**이다. 본문·템플릿 조회는 `COALESCE(JSON_UNQUOTE(JSON_EXTRACT(message,'$.request.msg')), JSON_UNQUOTE(JSON_EXTRACT(message,'$.request.content')))` 처럼 **양쪽을 함께** 볼 것. 수신번호도 `request.phn`(구) vs `request.recipient`(신)로 갈린다.
+  - **판별 키 = `$.request.channel` (2026-08-10 전수 실측).** `KAKAO`(6,803건)·`MMS`(961)·`PUSH`(4)는 **`content` 100% / `msg` 0건**, `channel` NULL(5,553)만 `msg` 위주(3,549). 즉 알림톡·MMS는 `msg`로 뽑으면 **무조건 NULL**이다. ⟹ **body NULL을 "발송 안 됨"으로 읽지 말 것** — 발송 여부는 row 존재와 `created_at`으로 판정한다.
 - **CRM 7일 예약전환 측정**: received(테스터 제외 live_users §5b) → 발송 후 7일 내 `reservation` 생성(`r.user_id = m.customer_id`, `r.created_at` 기준, `r.deleted_yn=0`. raw·비인과). `(customer_id, type)`별 첫 발송 dedup. 상세·재현쿼리 = caramel-api `docs/superpowers/specs/2026-06-30-crm-kill-keep-map.md` §2/§6.
 - **세차 시작 되돌리기(cancel-start) 이벤트 지문 = `reservation_status_log`에서 같은 예약의 `IN_PROGRESS` 뒤에 오는 `CONFIRMED`** (2026-08-10). 전용 로그 테이블은 없다. 한 예약에 여러 번 찍힐 수 있다(시작→되돌림→재시작→되돌림).
   ```sql
