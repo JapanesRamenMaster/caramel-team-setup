@@ -1023,6 +1023,20 @@ SELECT DATE(date) AS dt, SUM(cost) AS total_cost FROM (
 
 ### 6d. 정비·리포트
 
+**🔴 세차→정비 전환 퍼널 — 단계마다 테이블이 다르고, 어느 단계를 분자로 잡느냐로 2.5배 벌어진다 (2026-08-07)**
+
+| 단계 | 분자 정의 | 2025-05 실측 |
+|---|---|---|
+| 정비 상담 | `crm_consultation.created_at` DISTINCT user_id | 185/954 = **19.4%** |
+| 정비 오더 | `crm_repair_order.created_at`, `status != 'CANCELLED'` | 81/954 = **8.5%** |
+| 정비 완료 | `crm_repair_order.status='PAID'`, `paid_at` 기준 | 73/954 = **7.7%** |
+
+- 분모 = 그 달 세차 완료 고객 수 (`reservation.status IN ('WASHED','REPORT_SENT')` DISTINCT `user_id`, live_users 필터).
+- 🔴 **IR 덱·핸드오프의 "세차→정비 전환율 8.5%"는 오더 기준이다.** "상담 기준"으로 적혀 있던 것을 그대로 믿고 `crm_consultation`으로 재현하려다 19.4%가 나와 오답한 이력이 있다(2026-08-07). **지표를 인용할 땐 어느 단계인지 먼저 확인할 것.**
+- 🔴 **분모를 "세차 고객"으로 자르는지에 따라 정비 완료가 30% 달라진다** — live_users 전체 PAID **643건** vs 세차 이력 있는 고객만 **449건**(2026-08-07 기준). 세차→정비 누적 퍼널을 말할 땐 반드시 `∩ 세차 고객`으로 좁힌다.
+- 신호 발견 단계 = `crm_issue` ∩ 세차 고객 (`source_type` 무관 전체).
+- ⚠️ **프로젝션 모델(`repair_conv_rate`)의 분모는 또 다르다** — **타겟 차량을 가진** 세차 고객(타겟율 60.3%)이고 값은 고객수가 아니라 정비 **건수** 기준이다. DB 실측 전환율과 직접 비교하지 말 것.
+
 **정비(수리) 정산 — `crm_repair_order`**
 - status: `NOT_STARTED / IN_PROGRESS / COMPLETED / PAID(정산완료) / CANCELLED`
 - 금액 필드: `suggested_price`(매출액/고객 청구), `cost`(정산금액/원가), `delivery_fee`(탁송비)
