@@ -1515,8 +1515,14 @@ LEFT JOIN service s ON s.id = us.service_id
 - 🔴 **`paid_yn=1` + `used_yn=0` + `reservation_id` 있음 = 미반영 버그 상태.** 디테일러 앱 예약상세 API(`prisma-detailer-reservation.repository.ts`)가 `reservation_id=X AND used_yn=1`인 옵션만 조회하므로, 결제는 됐는데 디테일러에게는 안 보인다. (2026-08-06 예약 #83490 CS 실사례)
   - 원인: 옵션 결제 정산을 레거시 caramel-api와 zero-api가 경합한다. `cart.metadata.autoUseOptions` → `used_yn=1` 후처리는 **레거시에만** 있고, zero-api가 먼저 `payment.status='PAID'`로 바꾸면 레거시가 멱등 early-return 해서 후처리를 통째로 스킵한다. 빈도는 월 1~3건.
   - 잔존 건 탐지: `WHERE paid_yn=1 AND used_yn=0 AND reservation_id IS NOT NULL AND deleted_yn=0` + 예약 status 미완료.
+- 🔴 **"고객이 지금 보유한 옵션권 장수" = `used_yn=0 AND deleted_yn=0` 둘 다 필요. `deleted_yn`을 빼면 같은 엔타이틀먼트가 2행으로 중복 집계된다 (2026-08-10 실측).** 예약 취소(`POST /v1/admin/users/{id}/reservations/bulk-cancel {ticketAction:'GIVE_BACK'}`)가 소진된 옵션권을 **되돌리는 방식이 "그 행을 미사용으로 복구"가 아니라 "소진 행을 `deleted_yn=1`로 죽이고 같은 만료일의 새 행을 발급"**이다. 실측(user 33001): 1266→1362 · 1289→1363 · 1332→1364 · 1340→1365 · 1342→1366. ⟹ ①보유 집계에 `deleted_yn=0` 필수 ②**픽스처·핸드오프 문서에 `user_option.id`를 박아두면 취소 한 번에 어긋난다**(id로 지목하지 말고 `option_id`+`ended_at`으로).
 - **어느 서버가 그 row를 썼는지 판별 = `modified_at` tz 지문** (다른 테이블에도 적용 가능): `modified_at`이 `ON UPDATE CURRENT_TIMESTAMP`(서버 tz=**KST**)인 테이블에서, 레거시 caramel-api처럼 `modified_at`을 안 넘기는 writer가 쓰면 **KST 벽시계**로 찍히고, zero-api처럼 Prisma가 `modified_at: new Date()`를 명시하는 writer가 쓰면 **UTC**로 찍힌다. `created_at`(UTC)과 대조해 **+9h면 레거시, 같은 tz면 zero-api**. 로그 없이 writer를 특정할 수 있는 거의 유일한 단서.
-- 옵션 단건 추가 결제는 `payment.type='OPTION'`이 아니라 **`VOUCHER`**, `metadata.pathname='/payment/options'`·`metadata.autoUseOptions=true` (§7 payment 참조).
+- 🔴 **옵션 결제는 경로가 둘이고 `payment.type`이 다르다 — 한쪽만 세면 90%를 놓친다 (2026-08-10 prod 실측 정정).**
+  - **zero 카트 경로 = `payment.type='OPTION'`** + `cart_id` 채움 + `metadata={point,provider}`. 2026-05-11부터 등장, prod 840건/3,216만원(2026-05~08-09).
+  - **레거시 링크 경로 = `payment.type='VOUCHER'`** + `metadata.pathname='/payment/options'`·`metadata.autoUseOptions=true`. 꼬리만 남았다.
+  - 월별 건수(prod PAID): 2026-04 `OPTION 0 / 레거시 56` → 05 `139/45` → 06 `295/33` → 07 `302/30` → 08(9일까지) `104/10`. ⟹ **이관이 이미 대부분 끝났다.** 예전 문서가 "옵션 결제는 `type='OPTION'`이 **아니라** `VOUCHER`"라고 적어둔 건 레거시 단독 시절 기준이라 **지금은 오답**이다.
+  - **옵션 매출 정본 필터 = `type='OPTION'` OR (`type='VOUCHER'` AND `metadata.pathname='/payment/options'`).** 둘을 합쳐야 시계열이 안 끊긴다.
+  - writer 판별: `cart_id IS NOT NULL`이고 `metadata`에 `pathname`이 없으면 zero, `pathname`이 있으면 레거시. [[reference_wash_revenue_sources]]
 - 🔴 **옵션은 한 이름이 티어별 여러 `option_id`로 흩어져 있다 — id 하나로 필터하면 절반 이상 누락 (2026-08-10 실측).** `내부 세차 추가` = **74·85·86·87·88·89·90·91** 8개(건수 88=441 · 87=322 · 89=299 · 86=78 · 90=64 · 91=17 · 74=13 · 85=11). 상품 코스 `product_id BETWEEN 4037 AND 4057`과 같은 유형의 함정이다. **정본 필터 = `options.name = '내부 세차 추가'`**(티어가 늘어도 자동 포함).
   - ⚠️ **`name LIKE '%내부%'`로 넓히지 말 것** — `내부 스팀 청소`(62, 1,754건)가 섞인다. 이건 내부세차 추가가 아니라 별개 심화옵션이고, 외부만 예약엔 주당 0~3건만 붙는다.
   - 구 UI `내부까지 청소해 주세요`(68, 60건)는 2024-12~**2025-05로 종료**. 그 이전 기간을 보는 쿼리에서만 합칠 것.
