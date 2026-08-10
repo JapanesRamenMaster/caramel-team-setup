@@ -683,6 +683,19 @@ WHERE us.reservation_id IS NULL OR r.id IS NULL
 
 ---
 
+### 4b-16. 🔴 코호트 성숙게이트는 **버킷(주/월) 단위**로 걸어라 — 유저 단위면 마지막 막대가 매주 바뀐다 (2026-08-10 실측)
+
+"등록 후 N일 내 전환" 같은 코호트 지표에서 성숙게이트를 **유저 단위**(`user.first_event + INTERVAL N DAY <= NOW()`)로 걸면, 마지막 버킷이 **부분 코호트**가 된다. 그 주에 속한 유저 중 N일이 지난 사람만 들어가므로, 같은 SQL을 다음 주에 돌리면 **같은 막대의 값이 바뀐다**(재현 불가).
+
+- 실측(ap4j74 #213, 30일 게이트): 2026-07-06주 등록 172명 중 **141명(82%)만** 집계 → 표시 18.4%. 나머지 31명이 성숙하면 값이 달라진다.
+- **정본 = 버킷 전체가 성숙한 버킷만 표시.**
+  - 주간: `DATE_ADD(bkt, INTERVAL 6 DAY) + INTERVAL N DAY <= DATE(now_kst)`
+  - 월간: `LAST_DAY(bkt) + INTERVAL N DAY <= DATE(now_kst)`
+- **게이트 일수 = 전환 창 일수와 같아야 한다.** 창 없이 생애(ever) 전환을 세면서 게이트만 N일로 걸면, 성숙 안 된 전환이 계속 쌓여 과거 막대가 자란다.
+- **창 길이는 lag 분포를 재서 정하라.** 게이트가 길수록 최신 막대가 뒤로 밀린다(30일 게이트 = 최신 막대가 약 5주 지연). 실측 결과 30일 내 전환의 92%가 14일 안에 끝나 창을 14일로 줄였다(차량등록→예약 91.8% · 첫신청→첫세차 92.4%).
+
+---
+
 ## 5. 공통 패턴
 
 ### 5a. KST 변환
@@ -1310,6 +1323,14 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 | user_id | int | FK → app_user.id |
 | deleted_yn | tinyint | 0=정상 |
 | temp_yn | tinyint | 1=임시 차량 (필터 제거 권장) |
+| created_at | datetime | 차량 등록 시각 (UTC). ⚠️ **2026-07-11 이후 의미가 바뀜 — 아래 참조** |
+
+🔴 **온보딩 v3(2026-07-11 main 머지, PR #787) 이후 `car.created_at`은 "차량 등록 시점"이 아니라 "예약 완료 시점"이다 (2026-08-10 확인).**
+v3에서 로그인이 방문정보 입력 뒤로 밀리면서(`isOnboardingV3VisitInfoHandoff`), 차량은 로그인 전까지 intent로만 들고 있다가 **예약 완료 트랜잭션에서 예약과 함께 커밋**된다 — `prisma-onboarding-reservation-completion-transaction.repository.ts`의 `tx.car.create()`와 `tx.reservation_car.create()`가 같은 트랜잭션이다.
+- ⟹ **예약까지 못 간 사람은 `car` row가 아예 안 생긴다.** 등록수 급감은 이탈 악화가 아니라 계측 대상이 사라진 것.
+- ⟹ **"차량등록→예약 전환율"류 지표는 7/13을 기점으로 단절된다.** 분모가 분자의 부분집합에 가까워져 전환율이 구조적으로 튄다. 실측 지문: 타겟차 첫등록 후 **1시간 내 예약 비율** 7/08~7/12 0~11% → 7/13(월) **39%** → 7/27~ 43~75%. 주간 타겟차 등록수 361명(6/29주) → 52명(7/20주).
+- ⟹ 가입→등록→예약 퍼널을 7/13 전후로 한 축에 놓고 읽지 말 것. 온보딩 전환은 DB로 못 잡고 Amplitude 온보딩 진입→완료 퍼널로 봐야 한다.
+- ⚠️ 앱 내 차고 추가 등 온보딩 밖 경로는 여전히 독립적으로 `car` row를 만든다 — 그래서 전환율이 100%가 아니다.
 
 **국산차 브랜드 제외 패턴:**
 ```sql
@@ -1481,6 +1502,10 @@ LEFT JOIN service s ON s.id = us.service_id
   - 잔존 건 탐지: `WHERE paid_yn=1 AND used_yn=0 AND reservation_id IS NOT NULL AND deleted_yn=0` + 예약 status 미완료.
 - **어느 서버가 그 row를 썼는지 판별 = `modified_at` tz 지문** (다른 테이블에도 적용 가능): `modified_at`이 `ON UPDATE CURRENT_TIMESTAMP`(서버 tz=**KST**)인 테이블에서, 레거시 caramel-api처럼 `modified_at`을 안 넘기는 writer가 쓰면 **KST 벽시계**로 찍히고, zero-api처럼 Prisma가 `modified_at: new Date()`를 명시하는 writer가 쓰면 **UTC**로 찍힌다. `created_at`(UTC)과 대조해 **+9h면 레거시, 같은 tz면 zero-api**. 로그 없이 writer를 특정할 수 있는 거의 유일한 단서.
 - 옵션 단건 추가 결제는 `payment.type='OPTION'`이 아니라 **`VOUCHER`**, `metadata.pathname='/payment/options'`·`metadata.autoUseOptions=true` (§7 payment 참조).
+- 🔴 **옵션은 한 이름이 티어별 여러 `option_id`로 흩어져 있다 — id 하나로 필터하면 절반 이상 누락 (2026-08-10 실측).** `내부 세차 추가` = **74·85·86·87·88·89·90·91** 8개(건수 88=441 · 87=322 · 89=299 · 86=78 · 90=64 · 91=17 · 74=13 · 85=11). 상품 코스 `product_id BETWEEN 4037 AND 4057`과 같은 유형의 함정이다. **정본 필터 = `options.name = '내부 세차 추가'`**(티어가 늘어도 자동 포함).
+  - ⚠️ **`name LIKE '%내부%'`로 넓히지 말 것** — `내부 스팀 청소`(62, 1,754건)가 섞인다. 이건 내부세차 추가가 아니라 별개 심화옵션이고, 외부만 예약엔 주당 0~3건만 붙는다.
+  - 구 UI `내부까지 청소해 주세요`(68, 60건)는 2024-12~**2025-05로 종료**. 그 이전 기간을 보는 쿼리에서만 합칠 것.
+  - **"외부만 예약에 내부세차를 추가했나" 판정** = 예약의 `MIN(service.service_group_id)=3`(외부만) + `user_option`에 위 옵션이 `paid_yn=1 AND used_yn=1 AND deleted_yn=0`으로 존재. ⚠️ `service_group_id`만으로 세면(=`sg=1` 비중) 그건 **"풀서비스 상품 판매 비중"**이지 옵션 추가율이 아니다.
 
 ---
 
