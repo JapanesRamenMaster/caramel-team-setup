@@ -1543,7 +1543,8 @@ LEFT JOIN service s ON s.id = us.service_id
   - **레거시 링크 경로 = `payment.type='VOUCHER'`** + `metadata.pathname='/payment/options'`·`metadata.autoUseOptions=true`. 꼬리만 남았다.
   - 월별 건수(prod PAID): 2026-04 `OPTION 0 / 레거시 56` → 05 `139/45` → 06 `295/33` → 07 `302/30` → 08(9일까지) `104/10`. ⟹ **이관이 이미 대부분 끝났다.** 예전 문서가 "옵션 결제는 `type='OPTION'`이 **아니라** `VOUCHER`"라고 적어둔 건 레거시 단독 시절 기준이라 **지금은 오답**이다.
   - **옵션 매출 정본 필터 = `type='OPTION'` OR (`type='VOUCHER'` AND `metadata.pathname='/payment/options'`).** 둘을 합쳐야 시계열이 안 끊긴다.
-  - writer 판별: `cart_id IS NOT NULL`이고 `metadata`에 `pathname`이 없으면 zero, `pathname`이 있으면 레거시. [[reference_wash_revenue_sources]]
+  - **writer 판별은 `type` + `metadata`로만 한다. `cart_id`로는 못 가른다** — 2026-08-11 실측: 두 경로 다 `cart_id`가 채워진다(레거시 40/40, zero 413/413 non-null). 레거시는 `metadata.href`가 `caramel.thetrive.com/payment/options?reservationId=N`(레거시 웹) 40/40, zero는 `href` 없음.
+  - 표면도 갈려 있었다: **디테일러 앱·CS가 만든 링크 = 레거시 웹 결제 페이지**, **고객 앱 = zero 카트**(`/payment/cart/{uuid}`). 2026-08-10 승격으로 디테일러·어드민 발급도 zero로 넘어왔다. [[reference_wash_revenue_sources]]
 - 🔴 **옵션은 한 이름이 티어별 여러 `option_id`로 흩어져 있다 — id 하나로 필터하면 절반 이상 누락 (2026-08-10 실측).** `내부 세차 추가` = **74·85·86·87·88·89·90·91** 8개(건수 88=441 · 87=322 · 89=299 · 86=78 · 90=64 · 91=17 · 74=13 · 85=11). 상품 코스 `product_id BETWEEN 4037 AND 4057`과 같은 유형의 함정이다. **정본 필터 = `options.name = '내부 세차 추가'`**(티어가 늘어도 자동 포함).
   - ⚠️ **`name LIKE '%내부%'`로 넓히지 말 것** — `내부 스팀 청소`(62, 1,754건)가 섞인다. 이건 내부세차 추가가 아니라 별개 심화옵션이고, 외부만 예약엔 주당 0~3건만 붙는다.
   - 구 UI `내부까지 청소해 주세요`(68, 60건)는 2024-12~**2025-05로 종료**. 그 이전 기간을 보는 쿼리에서만 합칠 것.
