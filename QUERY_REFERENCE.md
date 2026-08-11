@@ -1557,8 +1557,10 @@ LEFT JOIN service s ON s.id = us.service_id
 
 - **후불 예약 판별 = 이 테이블에 row 존재 + `status <> 'CANCELED'`.** (⚠️ `user_service.postpaid_yn` 아님 — 온보딩 후불의 user_service는 `postpaid_yn=0`으로 생성됨. postpaid_yn=1은 레거시 구독 후불권.)
 - 컬럼: `reservation_id`(UNIQUE FK→reservation), `user_id`(FK→app_user), `status`(PENDING=수금대기/REQUESTED/CONFIRMED/CANCELED, NOT NULL DEFAULT PENDING), `collection_method`(CARD_TERMINAL/BANK_TRANSFER/PAYMENT_LINK), `requested_at`. created_at은 UTC 저장.
+- 🔴 **`payment_link_amount` 컬럼을 수금액으로 쓰지 말 것 — 실사용 전량 NULL**(2026-08-11 실측: 온보딩 첫예약 후불 71건 전건 NULL). 이름 때문에 금액 컬럼으로 보이지만 PAYMENT_LINK 방식에만 쓰이고 현재 수금은 BANK_TRANSFER/CARD_TERMINAL뿐이다. 스키마를 직접 보고 들어오면 반드시 걸리는 함정 — 금액은 아래 item 합 공식이 유일한 정본.
 - 예약 취소 시 status→CANCELED로 함께 전이됨.
 - **수금액 계산**: `reservation_onsite_collection_item.amount_snapshot` 합(`canceled_at IS NULL`만) + `reservation_onsite_collection_item_adjustment.amount` 합(할인=음수, 쿠폰 등).
+  - 🔴 **`user_service.product_id → product.price`로 환산하지 말 것 — adjustment(쿠폰·할인)를 통째로 놓쳐 과대집계된다.** 실측(2026-08-11, V3 첫예약 후불 40건): product.price 합 2,933,000원 vs 정본 공식 2,661,600원 = **+10.2% 과대**. product_id는 "무엇을 샀나"(구매 건수 집계)엔 정본이지만 "얼마 받나"엔 아니다.
 - 후불 선택 가능 조건: 타겟 차량(`car_model_target.is_target=1`)만.
 
 ```sql
@@ -1581,7 +1583,10 @@ SELECT roc.reservation_id, roc.status,
    WHERE i2.collection_id=roc.id AND i2.canceled_at IS NULL) AS amount_to_collect
 FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 ```
-- ⚠️ **`status`는 세차가 끝나도 `PENDING`에 머문다** — 수금완료 전이가 없다(2026-07-27 실측: 전체 49건이 PENDING/CANCELED 두 값뿐, WASHED 예약도 PENDING). "수금 완료" 필터를 걸면 전부 0건이 된다. `status <> 'CANCELED'`로만 거를 것.
+- ⚠️ **수금완료 전이가 없다 — "수금 완료" 필터를 걸면 전부 0건.** `status <> 'CANCELED'`로만 거를 것.
+  - 2026-07-27 실측: 49건이 PENDING/CANCELED 2값뿐, WASHED 예약도 PENDING.
+  - **2026-08-11 갱신: `REQUESTED`가 등장했다**(V3 첫예약 71건 = REQUESTED 27 / CANCELED 31 / PENDING 13). `CONFIRMED`·완료류는 여전히 0건이라 결론은 동일. **`collection_method`는 REQUESTED일 때만 채워진다**(BANK_TRANSFER 17 / CARD_TERMINAL 10) — PENDING·CANCELED는 NULL이므로 method로 후불을 세면 40%가 빠진다.
+  - ⚠️ **후불 취소율이 높다**: 온보딩 첫예약 기준 31/71 = **43.7%**(같은 기간 전체 첫예약 취소율 82/473 = 17.3%의 2.5배). 후불 예약 건수를 매출 기대치로 환산할 때 취소분을 빼지 않으면 크게 과대해진다.
 - **온보딩 상품 구매를 선불·후불 통틀어 세려면 `user_service.product_id`를 쓴다.** 후불도 온보딩 시점에 user_service가 product_id와 함께 생성되고 `payment_id`만 NULL이라, 결제 유무와 무관하게 한 소스로 잡힌다. `payment`/`cart`로 조회하면 후불 절반이 통째로 빠지고, `reservation_onsite_collection_item`으로 조회하면 취소분이 남는다(user_service는 `deleted_yn=0`으로 자동 정리됨).
   ```sql
   -- 온보딩 코스(라이트/베이직/장마 대비 풀코스) 일별 구매 고객수, 선불+후불 통합
