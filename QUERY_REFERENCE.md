@@ -889,7 +889,8 @@ first_sub_reservations AS (
 **effective 경계 저장 컨벤션 (스케줄 생성/수정 시)**
 - KST 자정 경계를 UTC로 저장: **D일부터 유효 = effective_from `'(D-1) 15:00:00'`**, 영구 = effective_to `'2099-12-30 23:59:59'`.
 - 코드 lookup은 `dayjs(date).startOf('day')`(UTC 자정)와 `effective_from <= date <= effective_to` 비교 + 해당 요일 rule 매칭.
-- 노출 시뮬레이션: `effective_from <= 'D일 00:00:00' AND effective_to >= 'D일 00:00:00'` + `day_of_week` + `zone_id` 조건으로 SQL 재현 가능.
+- 🔴 **노출 슬롯 "개수"를 SQL로 재현하지 말 것 — 그리드 ∩ 근무창 모델은 과대추정이다 (2026-08-12 실측).** SQL은 예약의 **실제 점유 길이**(반얀은 조회 시 90분 하한으로 재산출)와 부분휴무를 못 빼서, 남은 FREE 조각이 duration보다 짧아 실제로는 안 뜨는 칸을 "열림"으로 센다. 실측: 이승원21 8/13 근무창 KST 08~16이고 08시에 예약이 없는데도 08시 슬롯 **0** — 09시 예약이 90분(09:00~10:30)이라 FREE가 `08:00~09:00` **60분**뿐이었다. SQL로 판정 가능한 건 "그 요일에 스케줄·rule이 있나"까지(effective 판정은 아래 양쪽 strict 항목). **칸 수는 API로 센다.**
+- **그날 그 주소에 실제 몇 칸 뜨는가 = 무인증** `POST https://api-prod.thetrive.com/v1/scheduling/time-slots/query` body `{"addressId":N,"fromDate":"YYYY-MM-DD","toDate":"...","durationMinutes":90}` → `slots[]`를 KST 시각으로 group by. 반얀 주소 `addressId=12053`. ⚠️ `durationMinutes`를 고정하지 않으면 개수가 달라진다. 또 같은 조건 재조회 시 **개수는 같고 `detailerId`는 바뀐다**(동시각 후보 여럿이면 랜덤 1명 dedupe) → **"누가 열었나"는 이 응답으로 판정 금지, 사람은 work-day API로.**
 
 **🔴 디테일러 일부하 비교는 건수만으로 하면 틀린다 — 개인 근무창을 반드시 함께 조인 (2026-07-27 이승제 6건 항의 실사례)**
 - 표준 근무창은 rule `01:00:00~10:00:00` UTC(=**KST 10~19**)지만 **이른 조 `23:00:00~08:00:00`(=KST 08~17)가 여럿 있다** — 실측 명단: 이한결(177)·이승제(78)·이재형b(167)·황석찬(114). "이한결만 예외"로 알고 있으면 틀린다.
