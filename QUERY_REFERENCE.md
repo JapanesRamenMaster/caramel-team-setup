@@ -1438,8 +1438,14 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | deleted_yn | tinyint | 0=정상 |
 | deleted_at | datetime(3) | 삭제일 |
 | promotion_group_id | int | 프로모션 그룹 |
+| note | text | 운영 메모 **⚠️ 디테일러앱에 노출된다 — 아래 참조** |
 
 **테스터 제외 패턴:** `u.deleted_yn = 0 AND u.test_yn = 0 AND u.temp_yn = 0`
+
+🔴 **`note` = 디테일러앱 "고객 메모"로 렌더된다 (2026-08-13 코드 확인).** zero `ReservationHeader.tsx:225`가 `reservation.user?.note`를 예약상세 **최상단 파란 박스**에 띄운다 → 담당자가 누구든·그 고객의 모든 예약에 뜬다.
+- ⟹ **"예약별 지시" = `reservation.note` / "고객 상시 지시" = `app_user.note`.** 미래 예약이 0건인 고객(반얀 등 회차마다 새로 잡는 고객)은 예약 메모에 쓸 row가 아예 없으므로 이쪽이 유일한 경로다. 예약 4필드(`note`·`user_note`·`detailer_note`·`extra_care`)의 노출 위치는 메모리 `reference_reservation_note_fields_visibility`.
+- 실사용 935/226,345행, 대부분 유입 태그(`블로그 체험단`·`조준영 현장영업`) → **덮어쓰지 말고 append**.
+- 쓰기 = `PATCH /v1/admin/users/{userId}` (`{name,phone,note,adminYn}` `.strict()` **전필드 덮어쓰기** — 현재값 읽어 재전송). sales-admin엔 편집 UI가 없고(고객 생성 시에만 입력) zero 어드민 고객상세 모달에만 있다.
 
 🔴 **`phone`은 UNIQUE가 아니다 — `WHERE phone = ?` 스칼라 서브쿼리는 터진다 (2026-08-06 실측).** 재가입·탈퇴 반복으로 한 번호에 행이 쌓인다(실측 `01092828753` = **218행 중 217행 `deleted_yn=1`**). `WHERE user_id = (SELECT id FROM app_user WHERE phone='…')` 는 `Subquery returns more than 1 row`로 **에러**, `IN (...)`으로 바꾸면 이번엔 탈퇴 계정들의 옛 예약이 섞여 조용히 오답이 된다.
 - 특정 예약의 고객을 찾을 땐 **역방향**으로: `WHERE r.user_id = (SELECT user_id FROM reservation WHERE id = :rid)`.
@@ -1553,6 +1559,11 @@ LEFT JOIN service s ON s.id = us.service_id
   - ⚠️ **`name LIKE '%내부%'`로 넓히지 말 것** — `내부 스팀 청소`(62, 1,754건)가 섞인다. 이건 내부세차 추가가 아니라 별개 심화옵션이고, 외부만 예약엔 주당 0~3건만 붙는다.
   - 구 UI `내부까지 청소해 주세요`(68, 60건)는 2024-12~**2025-05로 종료**. 그 이전 기간을 보는 쿼리에서만 합칠 것.
   - **"외부만 예약에 내부세차를 추가했나" 판정** = 예약의 `MIN(service.service_group_id)=3`(외부만) + `user_option`에 위 옵션이 `paid_yn=1 AND used_yn=1 AND deleted_yn=0`으로 존재. ⚠️ `service_group_id`만으로 세면(=`sg=1` 비중) 그건 **"풀서비스 상품 판매 비중"**이지 옵션 추가율이 아니다.
+- 🔴 **옵션권을 지급할 product를 이름으로 고르면 틀린다 (2026-08-13 실측).** `유막`으로 검색하면 product가 20개+ 나오지만 대부분 `offer_kind='CUSTOM_PAYMENT_LINK'`(레거시 결제링크 전용)이고, 이름이 거의 같은 **4076 `유막 제거`(30,000원)는 `option_id=101`**로 3950과 **다른 옵션**이다.
+  - 정본 절차: ① `product WHERE type='OPTION' AND offer_kind='CATALOG'` ② `product_option`으로 `option_id`를 뽑아 **고객이 이미 보유한 `user_option.option_id`와 일치하는지 대조** ③ 그 product만 지급. (유막 제거/발수 코팅 = product **3950** → `option_id=3`)
+  - 지급 = `POST /v1/admin/users/{id}/tickets {"productIds":[...],"memo":"..."}`. **같은 id를 N번 넣으면 N장 발급된다** — `createAdminUserTickets`가 `productIds.map`을 그대로 돌려 dedupe하지 않는다.
+  - ⚠️ 이 경로 만료는 **3년**(`ISSUED_ENTITLEMENT_VALID_YEARS`)이라 패키지 번들로 받은 기존 옵션권(1년)과 **만료일이 갈린다** → `ticketSummaries`가 같은 이름으로 두 줄로 쪼개져 나온다. 잔량은 줄별 `remaining` 합으로 읽을 것.
+  - 카탈로그 조회 API(`GET /v1/admin/users/{id}/entitlement-grant-catalog`)는 prod 404(미배포) — 위 SQL 절차로 우회.
 
 ---
 
