@@ -86,6 +86,15 @@ if [ -d "$WORK_DIR" ] && [ -f "$INSTALL_DIR/build-claude-md.sh" ]; then
   fi
 fi
 
+# 6.6) dev 역할이면 PreToolUse 가드레일 훅 등록/복구 (멱등 — 이미 있으면 no-op)
+if [ -f "$CONFIG_FILE" ] && [ -f "$INSTALL_DIR/hooks/install-dev-hooks.sh" ]; then
+  ROLE_DEV=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
+  case "$ROLE_DEV" in
+    개발|개발자|엔지니어|dev|developer|engineer)
+      bash "$INSTALL_DIR/hooks/install-dev-hooks.sh" "$INSTALL_DIR" >&2 || true ;;
+  esac
+fi
+
 # ============================================================
 # 7) SessionStart 훅 등록 상태 검증 + 복구 (자가 치유)
 #    - 다른 도구가 settings.json을 덮어써서 훅이 사라진 경우 자동 복구
