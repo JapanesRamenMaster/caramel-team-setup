@@ -804,6 +804,13 @@ WHERE us.user_id = ? AND us.deleted_yn = 0
   churn 분모·분자, 과거 활성 스냅샷의 "경계 종료시점" 모두 이 식을 쓸 것. `stopped_at`=실제 해지일, `ended_at`=다음 결제 예정일 — 섞으면 갱신을 해지로 오해.
 - **⚠️ 구독-차량 1:1 바인딩은 2026-04-01 도입** (`represent_car_id` 설정률 ~95%→100% 시점). 그 전엔 구독 세차의 ~39%가 represent_car가 아닌 차에 발생 → **2026-04 이전 기간에 `represent_car_id`로 "구독으로 세차한 차"를 판정하면 왜곡**. 이전 기간은 reservation_car로 실세차 차량을 직접 볼 것 (검증 2026-07-07).
 
+**⚠️ 구독에 결제 공백(N개월 미청구)이 보이면 순서대로 갈라라 — 결제 실패로 단정 금지 (2026-08-14 실측)**
+정액 구독인데 특정 월 `payment` row가 아예 없는 경우, 대부분 원인은 **고객이 누른 일시정지**다.
+1. **미시도 vs 실패** = `card_payment`(`payment_id` 조인)에 **row 자체가 없으면 청구를 시도조차 안 한 것**. 실패는 row가 남고 `fail_reason`이 채워진다. `payment`만 보면 둘을 구분할 수 없다.
+2. **일시정지가 `ended_at`(=다음 결제일)을 미룬다.** 고객이 앱에서 1~4주기를 직접 고르고(zero `pause-subscription.handler.ts`, `pausePeriods` 1~4 밖은 400), `ended_at += period × pausePeriods` + `paused_at` 세팅. `period_unit='month'`면 그만큼 **청구월이 통째로 사라진다**. 정지기간 역산 = `(변경 후 ended_at − 변경 전) ÷ period`.
+3. **재개하면 `paused_at`은 NULL로 덮인다**(zero `prisma-subscription.repository.ts`) → **과거 일시정지 이력은 현재 행에 남지 않는다.** 2026-05 이전 건은 `log`(`table_name='subscription'`, `column_name='ended_at'`)로 복원되지만 **그 이후는 DB에 이력이 없다** → §7 `log`의 커버 경고를 먼저 읽을 것.
+- 실사례: 전용 결제링크 구독(234,000원/월)이 2026-05·06월 청구 0건이었고 `card_payment`도 0행 = 미시도. 원인은 04-06 결제 58분 뒤 고객이 누른 **2개월 일시정지**(log에 `ended_at 2026-05-05 → 2026-07-05`, `type=USER`)였다.
+
 **1회권 vs 구독 구분:**
 - **1회권**: `user_service.subscription_id IS NULL`
 - **구독 세차**: `user_service.subscription_id IS NOT NULL`
@@ -1504,6 +1511,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | postpaid_yn | tinyint(1) | 0=선불, 1=후불(레거시: 선불권 소진 시 자동생성 후불권) **⚠️ 온보딩 '후불 결제(현장수금)' 예약은 postpaid_yn=0으로 생성됨 — 후불 판별에 이 컬럼 단독 사용 금지, `reservation_onsite_collection` 참조** |
 | applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
 | ended_at | datetime | 세차권 만료일 **⚠️ 무한대 sentinel이 여러 값으로 혼재 — 아래 참조** |
+| delete_reason | varchar | 삭제 사유. 실값 `'삭제 후 새로운 세차권 부여'`(예약취소 반환 재발급) · `'후불 세차권 상계처리 (<us_id>)'`(갱신 상계, 괄호 안이 상계 대상 id) · `'ADMIN_BULK_CANCEL'`. **재발급분과 상계 소멸분을 가르는 유일한 단서** — 이 값 없이 `deleted_yn=1`만 보면 "취소로 반환된 권"과 "상계로 사라진 권"이 같아 보인다 |
 
 - ⚠️ **취소 반환 = soft-delete + 새 row 재발급** (기존 row는 `deleted_yn=1`·`reservation_id` 유지, 새 미사용 row 생성) → 상세 §5c.
 - ⚠️ **고객 보유 세차권 수는 `used_yn=0`만 세면 안 된다** (미래예약 선점분 20% 누락) → 상세 §5c.
@@ -1619,10 +1627,15 @@ FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 | 컬럼 | 타입 | 설명 |
 |------|------|------|
 | id | int | PK |
-| name | varchar(25) | 서비스명 (`'외부만'`, `'외부 + 내부'` 등) |
+| name | varchar(25) | 서비스명 (`'외부만'`, `'외부 + 내부'` 등) — **이름만으로는 티어를 알 수 없다**(같은 이름이 T1~T7로 7행) |
+| tier_id | int | FK → `car_tier.id` → `car_tier.tier`(1~7). **"이 세차권이 몇 티어 차량용인가"** — 차량 자체의 티어는 `car_model.tier_id`로 별개 경로. 티어 무관 세차권은 NULL |
 | deleted_yn | tinyint(1) | 0=정상 |
-| price | int | 기본가 |
-| wash_type | varchar(15) | 세차 유형 |
+| price | int | 기본가 (같은 이름·다른 티어 예: 외부+내부 T4 69,000 / T5 75,000) |
+| wash_type | varchar(15) | 세차 유형 (`OUTSIDE`/`BOTH`) |
+
+🔴 **세차권 티어 ≠ 예약 차량 티어일 수 있고, 그 차액은 포인트로 적립된다 (2026-08-14 실측).** 다차 고객이 T5 구독 세차권을 T4 차량에 쓰면 `payment`에 `type=NULL` · `amount=0` · `name='세차권 티어 차액 포인트 적립'` row가 생기고 `user_point`에 차액이 적립된다(T5 75,000 − T4 69,000 = 6,000P). 반대 방향(`외부만 4티어 → 5티어`)도 실존.
+- ⟹ 예약의 `service_id`가 구독 상품 티어와 다르다고 **오지급·오사용으로 판정하지 말 것** — 정상 전환이다. `payment.name`에 `'N티어 → M티어'`가 찍힌 amount=0 row가 그 지문.
+- ⟹ **차량이 2대 이상이고 티어가 갈리는 고객은 매 세차마다 이 row가 생긴다.** 티어 단일 구독으로 다차를 운용하는 구조적 마찰이라, 이 row 빈도가 다차 고객 탐지 신호로도 쓸 수 있다.
 
 ---
 
@@ -1633,11 +1646,62 @@ FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 | user_id | int | FK → app_user.id |
 | type | varchar(25) | `VOUCHER`=1회권, `SUBSCRIPTION`=구독, `OPTION`=옵션, `PACKAGE`=패키지 **⚠️ PACKAGE엔 제휴 쿠폰 사용분이 섞인다 — 회권 판매 집계 전 §6c의 `COUPON_PACKAGE_REDEEM` 경고 확인** / ⚠️ NULL 존재(`IFNULL(type,'')` 비교) / ⚠️ 앱 '세차 옵션 추가' 결제는 `OPTION`이 아니라 `VOUCHER`로 저장됨 |
 | status | varchar(25) | 집계 대상: `IN ('PAID','PARTIAL_CANCELED')` |
-| amount | int | 결제금액 **⚠️ 구독/횟수권 고객 75%는 payment 없음** |
+| amount | int | 결제금액 **⚠️ 구독/횟수권 고객 75%는 payment 없음** / 🔴 **포인트 상계 후 "실제 카드 청구액"이다 — 상품 정가 아님(아래 참조)** |
 | cancel_amount | int | 취소금액 (PARTIAL_CANCELED 시 `amount-cancel_amount`=실매출) |
 | paid_at | datetime | 결제 완료일 |
 | name | varchar(250) | 상품명 (구독은 플랜명 포함, `'외 N개'` suffix 주의) |
 | deleted_yn | tinyint(1) | NULL 가능 — `IS NOT TRUE` 패턴 사용 |
+
+🔴 **`amount`는 포인트 상계 후 금액이다 — 정액 구독인데 금액이 매달 다르면 가격 변경이 아니라 포인트 차감이다 (2026-08-14 실측).**
+- 실측: 234,000원 정액 링크 구독이 `234,000 / 225,000 / 216,000 / 234,000 / 219,000 / 234,000`으로 찍혔다. 차액 9,000·18,000·15,000은 전부 그 달에 태운 포인트였다.
+- **대조 경로 = `user_point`**(`user_id`, `point`, `left_point`, `updated_at`, `expired_at`). 결제일과 **같은 날 `left_point=0`으로 바뀐 행들의 `point` 합** = 그 결제에서 소진된 포인트. 위 3건 모두 정확히 일치.
+- ⚠️ `user_point_history`에는 `type` 컬럼이 **없다** — 적립/소진 구분으로 조회하려다 막힌다. 소진 시점 판정은 `user_point.updated_at`.
+- ⚠️ 적립 원천이 섞인다: 리뷰 리워드 3,000원(만료 있음) · **세차권 티어 차액 6,000원**(만료 NULL, §service 참조). 만료 유무로 원천을 가를 수 있다.
+- ✅ **어드민 API는 이미 갈라서 준다** — `GET /v1/admin/users/{userId}` → `payments[]`의 `cashPaidAmount` · `pointPaidAmount` · `refundableCashAmount` · `refundablePointAmount`. **현금/포인트 분해가 필요하면 SQL보다 이 EP가 정답.**
+
+---
+
+### card_payment (PG 결제 시도 원장) (2026-08-14 실측)
+`payment` 1행에 대응하는 **실제 PG 시도 기록**. 결제 진단의 정본.
+
+| 컬럼 | 설명 |
+|------|------|
+| payment_id | FK → `payment.id` |
+| subscription_id | 구독 갱신 결제면 채워짐 (1회권은 NULL) |
+| amount / status | 청구액 / **소문자** `'paid'` (⚠️ `payment.status`는 대문자 `'PAID'` — 섞어 쓰면 0행) |
+| fail_reason | 실패 사유. **성공 건은 NULL** |
+| imp_customer_uid | 빌링키(`billing-key-…`) — 자동갱신 카드 식별 |
+| pg_provider / imp_pg_id | 실측 `kpn` / `porthetrive3` (firstpay) |
+| receipt_url | firstpay 영수증. `mxissuedate`에 **KST 청구시각**이 박혀 있어 tz 교차검증에 쓸 수 있다 |
+
+- 🔴 **"청구 시도조차 안 했다"의 유일한 증거 = 이 테이블에 row가 없는 것.** `payment`엔 실패 row가 남지 않는 경로가 있어, `payment` 부재만으로는 미시도/실패를 못 가른다 → §5d 결제 공백 진단.
+- ⚠️ `started_at`·`paid_at`이 자동갱신 건에선 전부 NULL이다. 청구 시각은 `created_at`(UTC)으로 볼 것.
+
+---
+
+### log (레거시 변경 이력) 🔴 5개 컬럼만 기록 + 구독분은 2026-06에 죽었다 (2026-08-14 실측)
+이름이 범용이라 "전체 감사 로그"로 착각하기 쉽다. **아니다.**
+
+| 컬럼 | 설명 |
+|------|------|
+| table_name / column_name / record_id | 변경 대상. 조합이 **아래 5개가 전부** |
+| old_value / new_value | 변경 전후 값 (문자열) |
+| type | `USER` 85,059 / `SYSTEM` 698 — **고객 본인 액션인지 시스템인지 갈림** |
+| created_by | 행위자 `app_user.id` |
+| created_at | UTC |
+
+| table.column | 건수 | 마지막 기록 | 상태 |
+|---|---|---|---|
+| `user_service.used_yn` | 47,915 | 2026-08-13 | ✅ 살아있음 |
+| `user_option.used_yn` | 20,007 | 2026-08-13 | ✅ 살아있음 |
+| `subscription.status` | 11,474 | 2026-07-23 | 🔴 사실상 사망 |
+| `subscription.ended_at` | 5,797 | 2026-08-11 | 🔴 사실상 사망 |
+| `promotion_application.payment_id` | 562 | 2026-03-19 | 🔴 사망 |
+
+🔴 **`log`에 없다 ≠ 그 변경이 없었다.** 구독 기록은 쓰기 경로가 zero-api로 넘어가며 2026-06에 끊겼다 — 월별 `subscription.ended_at`은 2026-04 **519** → 05 **191** → 06 **13** → 07 **4**, `subscription.status`는 04 **931** → 05 **355** → 06 **0**.
+- 커버율 실측(2026-07-20~08-13): 실제 일시정지 **114건+** vs `log` 기록 **11건 = ≤9.6%**. ⟹ **2026-06 이후 구독 상태·결제일 변경 이력은 DB에 사실상 없다.** 그 구간은 `paused_at`·`ended_at` **현재값에서 역산**하는 수밖에 없다.
+- ✅ 지금도 쓸 수 있는 것 = **`user_service.used_yn 0→1`이 "그 세차권을 언제·누가 썼나"의 정본**(`created_by`로 행위자까지). `user_option`도 동일.
+- ⚠️ 같은 사람의 서로 다른 계정이 `created_by`로 섞일 수 있다(한 번호에 계정 복수 → §app_user). 행위자를 사람 단위로 볼 땐 전화번호로 묶을 것(§4b-13).
 
 ---
 
