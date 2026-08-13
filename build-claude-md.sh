@@ -28,6 +28,7 @@ mkdir -p "$WORK_DIR"
 
 # --- 1) 관리 블록 본문 조립 (임시 파일) ---
 BLOCK="$(mktemp)"
+rolefile=""   # ROLE 이 비어도 아래 코드 레포 분기에서 참조하므로 여기서 초기화 (set -u)
 {
   cat "$BASE"
 
@@ -42,6 +43,7 @@ BLOCK="$(mktemp)"
       마케팅|marketing) rolefile="marketing" ;;
       운영|operations) rolefile="operations" ;;
       데이터|분석|data|data-analyst|데이터분석) rolefile="data-analyst" ;;
+      개발|개발자|엔지니어|dev|developer|engineer) rolefile="dev" ;;
       *) [ -f "$INSTALL_DIR/roles/$rl.md" ] && rolefile="$rl" ;;
     esac
     if [ -n "$rolefile" ] && [ -f "$INSTALL_DIR/roles/$rolefile.md" ]; then
@@ -69,9 +71,15 @@ BLOCK="$(mktemp)"
 - 그 외 서브모듈(`caramel-app`, `caramel-api`, `careplus-web`)은 리팩토링 이전 코드 — 참조용으로만 보고, 현행 동작 확인이 필요하면 caramel-zero를 우선
 
 ### 공통 규칙
-- 코드는 **읽기 전용**. 절대 수정하지 말 것
-- 어느 레포를 봐야 할지 불확실하면 사용자에게 먼저 확인
 REPOEOF
+
+  # 코드 수정 권한은 역할에 따라 갈린다 (dev 역할만 쓰기 가능)
+  if [ "$rolefile" = "dev" ]; then
+    printf -- '- 코드 수정·PR은 위 "개발 작업 추가 규칙"의 절차를 따를 것\n'
+  else
+    printf -- '- 코드는 **읽기 전용**. 절대 수정하지 말 것\n'
+  fi
+  printf -- '- 어느 레포를 봐야 할지 불확실하면 사용자에게 먼저 확인\n'
 } > "$BLOCK"
 
 # --- 2) 기존 파일에서 보존할 개인 메모 추출 (END 마커 ~ DATE_MARKER 사이) ---
