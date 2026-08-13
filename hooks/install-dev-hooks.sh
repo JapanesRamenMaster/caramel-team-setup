@@ -27,7 +27,7 @@ mkdir -p "$HOME/.claude"
 PY_BIN="$(command -v python3)"
 
 HOOKS_DIR="$HOOKS_DIR" SETTINGS_FILE="$SETTINGS_FILE" PY_BIN="$PY_BIN" python3 - <<'PYEOF'
-import json, os, sys
+import json, os, shlex, sys
 
 hooks_dir = os.environ["HOOKS_DIR"]
 settings_file = os.environ["SETTINGS_FILE"]
@@ -59,7 +59,8 @@ for event, matcher, script in SPEC:
     path = os.path.join(hooks_dir, script)
     if not os.path.exists(path):
         continue
-    cmd = f"{py} {path}"
+    # 홈 경로에 공백이 있으면 훅 커맨드가 word-split 돼 훅이 조용히 안 돈다
+    cmd = f"{shlex.quote(py)} {shlex.quote(path)}"
     groups = data["hooks"].setdefault(event, [])
 
     # 이미 등록돼 있으면(경로 무관, 스크립트명 기준) 건너뛴다.

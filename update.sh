@@ -91,7 +91,8 @@ if [ -f "$CONFIG_FILE" ] && [ -f "$INSTALL_DIR/hooks/install-dev-hooks.sh" ]; th
   ROLE_DEV=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
   case "$ROLE_DEV" in
     개발|개발자|엔지니어|dev|developer|engineer)
-      bash "$INSTALL_DIR/hooks/install-dev-hooks.sh" "$INSTALL_DIR" >&2 || true ;;
+      bash "$INSTALL_DIR/hooks/install-dev-hooks.sh" "$INSTALL_DIR" >&2 \
+        || echo "WARNING: dev 가드레일 훅 등록 실패 — 코드 작업 전 확인 필요" >&2 ;;
   esac
 fi
 
