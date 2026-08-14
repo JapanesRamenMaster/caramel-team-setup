@@ -1,0 +1,14 @@
+# DB·API 크레덴셜 — 절대 커밋 금지
+.env
+.env.*
+!.env.example
+
+# 로컬 의존성 (setup.sh가 npm install로 생성)
+node_modules/
+package.json
+package-lock.json
+
+# 키 파일
+*.key.json
+google-sheets-key.json
+*.pem
