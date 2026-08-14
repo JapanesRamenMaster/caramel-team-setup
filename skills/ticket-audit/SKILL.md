@@ -22,10 +22,18 @@ allowed-tools:
 - 인자로 전화번호를 받는다 (예: `/ticket-audit 010-1234-5678`)
 - 인자가 없으면 AskUserQuestion으로 전화번호를 요청한다
 
+## 선행 조건 (첫 쿼리 전 1회)
+
+🔴 **첫 쿼리 전 `~/.caramel-team-setup/QUERY_REFERENCE.md`를 Read하라.** 이 스킬은 그 문서의 함정 지식(계정 복수·tz·`log` 커버 한계·포인트 상계 등)을 전제로 쓰였다. 안 읽고 SQL을 변형하면 조용히 틀린 답이 나온다.
+- 이 경로는 **팀 셋업(`setup.sh`)을 돌렸든 안 돌렸든 항상 존재**한다(repo 본). 셋업을 돌렸다면 `~/caramel-claude/QUERY_REFERENCE.md`에도 사본이 있다 — 둘 중 있는 쪽을 읽으면 된다.
+- 이미 읽었으면 skip.
+
 ## DB 쿼리 방법
 
-- `./mysql-query.sh "SQL"` 로 실행 (워크스페이스 루트 기준)
-- cs-team-setup에서 실행 시: 같은 디렉토리에 `mysql-query.sh` 있음
+- `mysql-query.sh "SQL"` 로 실행. **스크립트는 자기 옆의 `.env`를 읽는다** — 어느 사본을 쓰든 그 디렉토리에 `.env`가 있어야 한다.
+  - 팀 셋업을 돌린 경우: `~/caramel-claude/mysql-query.sh`
+  - 셋업 없이 repo만 받은 경우(개발자): `~/.caramel-team-setup/mysql-query.sh`
+- 계정은 `caramel_reader` = **`caramel-prod` 전체 SELECT 전용**. 쓰기는 스크립트가 차단한다(읽기 쿼리만 허용). `WITH`로 시작하는 CTE도 차단되므로 **중첩 서브쿼리로 풀어 쓸 것**.
 - DateTime은 UTC 저장 → KST 변환 필수 (`+ INTERVAL 9 HOUR`)
   - 🔴 **`subscription.ended_at`·`paused_at`도 UTC다 — 반드시 변환할 것 (2026-08-14 실측으로 교정).** 이전 버전은 "이미 KST라 변환하지 말 것"이라고 안내했고, 그건 **틀렸다.**
     - 근거 ① `paused_at` raw 시각 분포(257건): 피크 **03~04시**, 최저 **16~20시(0~1건)**. raw가 KST면 "새벽 3시에 구독 정지를 제일 많이 누른다"가 되어 비현실 → +9h면 **12~13시 피크**로 정상.
