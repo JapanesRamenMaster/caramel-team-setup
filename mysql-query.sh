@@ -35,7 +35,7 @@ case "$QUERY_UPPER" in
     WITH*)
         # CTE(WITH)는 읽기 전용일 때만 허용. WITH ... DELETE/UPDATE 등 쓰기 CTE(MySQL 8)는 차단.
         # 단어경계(grep -w)로 'updated_at' 같은 컬럼명 오탐 방지.
-        if echo "$QUERY_UPPER" | grep -qiwE "(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|GRANT|REPLACE|MERGE|CREATE)"; then
+        if echo "$QUERY_UPPER" | grep -qiwE "(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|GRANT|REPLACE|MERGE|CREATE|RENAME)"; then
             ALLOWED=false
         else
             ALLOWED=true
@@ -54,6 +54,14 @@ if [ "$ALLOWED" = false ]; then
     echo ""
     echo "  DELETE, UPDATE, INSERT, DROP, ALTER 등 데이터를 변경하는 쿼리는 실행할 수 없습니다."
     echo "  데이터 변경이 필요하면 CPO에게 요청하세요."
+    echo ""
+    echo "  테이블 구조 변경이라면 DDL을 직접 치지 마세요."
+    echo "  raw DDL은 _prisma_migrations 에 이력이 안 남아 공유 dev DB가 drift 상태가 되고,"
+    echo "  다음 사람이 마이그레이션을 돌릴 때 DB 리셋을 제안받습니다. 정규 경로는 이렇습니다:"
+    echo "    1) caramel-zero/apps/api/prisma/schema.prisma 수정"
+    echo "    2) cd apps/api && pnpm db:migrate   (Prisma가 폴더+SQL 생성·dev 적용)"
+    echo "    3) 생성된 migrations 폴더 커밋"
+    echo "    4) prod 는 그 SQL 을 사람이 수동 실행"
     echo ""
     exit 1
 fi
