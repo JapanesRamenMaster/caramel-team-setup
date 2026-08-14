@@ -1413,6 +1413,11 @@ JOIN (SELECT reservation_id, MAX(car_id) car_id FROM reservation_car GROUP BY re
 JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 ```
 
+**생성 경로·영업자 귀속 = `reservation_metadata`(`reservation_id` + `key` + JSON `value`) (2026-08-14 실측)**
+- `key='admin/walk-in'` = 현장접수(워크인), `key='admin/call'` = 콜콘솔 컨시어지, 둘 다 없으면 고객앱. **워크인만 세면 콜콘솔분이 통째로 빠진다.**
+- 워크인 value JSON에 **`intakeChannel`**(`FIELD_SALES`/발렛/직접방문) + **`fieldSalesDetailerId`·`fieldSalesDetailerName`** = 현장영업 실제 영업자. 접수 계정(`sales.partnerId`)은 반얀 공용 `오퍼레이터`라 영업자 특정에 못 쓴다 — **"누가 팔았나"는 이 필드가 정본**.
+- `key='banyan/strategy'` = 셀장이 쓴 판매 작전 텍스트(`{text, authorName, updatedAt}`).
+
 ---
 
 ### reservation_change_log (예약 변경 이력, 행위자 판별용)
@@ -1525,6 +1530,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
   - **레거시** `POST /users-admin/{userId}/rewards` (sales-admin `사용권 지급` 드로어) → **운영자가 만료일을 직접 고른다. 화면 기본값이 `dayjs().add(1,'month')`** (`GrantRewardDrawer.tsx:38`)라 대부분 +30/31일로 찍힌다.
   - **레거시 경로 지문**: `partner_activity_log_id` NOT NULL + `product_id` NULL + `paid_amount` NULL.
     `partner_activity_log`(`action='SERVICE_ISSUED'`) 조인 → `description`에 **운영자가 쓴 메모**, `partner_id`에 지급자가 남는다. 발급 출처를 물으면 이 조인이 1순위다.
+  - **세 번째 경로 = 패키지 grant**(zero `grantAdminBanyanEntitlementPackage`, 반얀 5·10회권) → 만료 **정확히 1년**(`calculateIssuedUserServiceEndedAt`, 파일 로컬 3년 상수와 다름). 지문 = `service_id=137` + `product_id` NULL + `paid_amount=0` + **`partner_activity_log_id` NULL**. 🔴 **이 경로는 `partner_activity_log`에 아무것도 안 남긴다** — 지급 주체를 물으면 `crm_note`(수금 문구)의 `partner_id`가 유일한 단서다. 반얀 현장은 공용 `오퍼레이터`(partner 41) 계정이라 개인 특정은 불가하고, 실제 영업자는 예약 쪽 `reservation_metadata`로 가야 나온다(바로 아래 §reservation).
   - ⚠️ **만료기간으로 발급 경로를 가르지 말 것** — "30일권"은 별도 경로가 아니라 화면 기본값이다. 코드 상수인지 UI 기본값인지 확인 없이 나누면 한 경로를 둘로 센다.
   - ⚠️ 드로어의 service 드롭다운은 `comment !== 'DEPRECATED'`만 필터한다(`:28`) → **내부용 service도 CS 지급 화면에 그대로 노출된다.**
 - 🔴 **유효기간 일괄 연장 시 `ended_at < 목표일` 가드 필수** — 조건 없이 UPDATE하면 2999/2099/9999 행이 함께 걸려 **연장이 아니라 단축**이 된다.
