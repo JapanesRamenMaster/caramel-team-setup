@@ -949,7 +949,8 @@ first_sub_reservations AS (
 - 재배정 API(sales-admin `PUT /careplus/reservations-admin/{id}/schedule`, zero-api admin `PATCH`)는 대상 디테일러의 **근무시간·휴무·현직/퇴사를 전혀 검증 안 함** (`checkScheduleConflict`=같은 디테일러 동일시각 겹침만, `skipConflictCheckYn=true`면 그마저 스킵). 검증은 고객 슬롯조회 경로(`findActiveDetailers`)에만 있음 → **API 성공 ≠ 실제 가용.**
 - ⟹ 재배정 대상을 고를 땐 아래를 **직접** 걸 것: ①Active 4조건(§3a: `booking_yn=1·retired_yn=0·deleted_yn=0·direct_yn=1`) ②출장 재배정이면 `supply_sheet.region <> '오토랩'`(고정샵은 필드 안 돎) ③대상 시각이 `detailer_holiday`(부분휴무 포함, from~to 둘 다 UTC 직접비교) 안에 없음 ④그 시각 겹치는 CONFIRMED 예약 없음 ⑤더미 `132/125/168` 제외.
 - 🔴 **"그날 예약 0건 = 여유 있음"이 아니다 (2026-08-06 실측).** 2026-08-07 예약 0건인 디테일러 8명 중 7명이 연차·퇴사예정이었다(한홍구·김승규·남경우·김민호·김남용·장태훈·이승제). 건수로 인계처를 고르면 **가장 안 되는 사람만 뽑힌다.** 후보는 위 ①~⑤ + effective 스케줄 존재를 먼저 통과시킨 뒤 건수로 정렬할 것.
-- ⚠️ **실제 테이블명은 `detailer_supply_sheet`** (문서·구두로 "supply_sheet"라 부르지만 `SHOW TABLES LIKE '%supply%'`엔 `detailer_supply_sheet`·`detailer_supply_load_log`·`detailer_supply_weekly_snapshot`뿐). 유용 컬럼: `name`·`status`·`cell_name`(셀장)·`region`(Z번호)·`phone_norm`·**`home_address`(자택, 디테일러 출퇴근 동선 판단용)**·`car_plate`·`work_start_date`. ⚠️ `name`·`phone_norm` 비교 시에도 **`COLLATE utf8mb4_general_ci` 양쪽에 붙일 것** — 안 붙이면 `Illegal mix of collations`로 죽는다.
+- ⚠️ **실제 테이블명은 `detailer_supply_sheet`** (문서·구두로 "supply_sheet"라 부르지만 `SHOW TABLES LIKE '%supply%'`엔 `detailer_supply_sheet`·`detailer_supply_load_log`·`detailer_supply_weekly_snapshot`뿐). 유용 컬럼: `name`·`status`·`cell_name`(셀장)·`region`(Z번호)·`phone_norm`·**`home_address`(자택, 디테일러 출퇴근 동선 판단용)**·`car_plate`·`batch`(기수)·**`hire_date`(입사일)**·`work_start_date`(실투입일)·`retired_date`. ⚠️ `name`·`phone_norm` 비교 시에도 **`COLLATE utf8mb4_general_ci` 양쪽에 붙일 것** — 안 붙이면 `Illegal mix of collations`로 죽는다.
+- 🔴 **디테일러 근속·입사일 정본 = `detailer_supply_sheet.hire_date`. `detailer.created_at`을 쓰면 틀린다 (2026-08-14 실측).** `detailer`엔 입사일 컬럼이 아예 없고 `created_at`은 행 생성일이다 — 최솟값이 2024-12-17(테이블 이관 흔적)이라 실제보다 근속이 짧게 나온다(김희헌80: row 2025-02-13인데 첫 WASHED 2024-05-06 = 9개월 손실). **`schema.prisma`에 없는 GAS 동기화 테이블이라 Prisma만 보면 "입사일 데이터가 없다"고 오판하기 쉽다**(실제로 그렇게 오판했다). `hire_date`는 `batch`·첫 세차와 정합(이승원21 12-18 입사 → 12-27 첫 세차). ⚠️ 활성 65명 중 1명 미매칭 + 김희헌 1건 어긋남 → **`created_at` 폴백 금지, 예외는 수동 확인.** 참고 분포(2026-08-14, §3a 65명): 근속 1년+ 19명 · **2년+ 0명 · 3년+ 0명** — 결함이 아니라 직영 조직이 2024-12(1기) 시작이라 사실이다.
 - 현직 판별: `detailer_supply_sheet.status='현직'`이 정본(퇴사/하차/삭제/교육중 제외). ⚠️ `detailer.retired_yn`은 미신뢰 — 실제 퇴사자도 0인 경우 있음(주진우147, retired_yn=0인데 booking_yn=0·supply_sheet 퇴사). `booking_yn=0`이 실질 비활성 시그널. supply_sheet 조인=phone `REPLACE(phone,'-','') COLLATE utf8mb4_general_ci`, `status IS NULL`=로스터 누락(퇴사 아님, 확인 필요).
 - ⚠️ **반얀 파견 예외**: 반얀 파견 디테일러(`detailer_work_schedule.type LIKE 'BANYAN%'`, 예 `BANYAN_TREE_EXTENDED`)는 정상근무 차단용 **종일 휴무**가 걸려도 그날 배정된 **반얀 예약(장충단로 60)은 본인 담당** → 휴무충돌 감사·재배정 대상에서 제외(2026-07-24 이형준161 사례).
 - ⚠️ **반얀 예약 매칭은 `LIKE '%장충단로 60%'` 금지** — '장충단로 600'·'장충단로 60길'을 오탐한다. **`location REGEXP '장충단로 ?60($|[^0-9길])'`** 를 쓸 것(공백 없는 '장충단로60'까지 커버, caramel-zero `isBanyanAddress` 정규식과 같은 기준). ⚠️ 파이썬 `mysql.connector`로 실행할 때 `%`가 들어가면 이스케이프 함정이 있으니 REGEXP가 안전하다.
@@ -1202,7 +1203,11 @@ WHERE wri.deleted_yn = 0
 BEFORE/AFTER 섹션 종류:
 - 외부: `OUTSIDE_FRONT`, `OUTSIDE_DRIVER_SIDE`, `OUTSIDE_PASSENGER_SIDE`, `OUTSIDE_FRONT_GLASS`, `OUTSIDE_DRIVER_SIDE_WHEEL`
 - 내부: `INSIDE_DRIVER_SEAT`, `INSIDE_CENTER_FASCIA`
-- 평가 컬럼(`evaluation_status`, `evaluated_at`, `evaluator`)은 현재 전량 `PENDING` — 미사용 상태.
+- 🔴 **평가 컬럼(`evaluation_status`, `evaluated_at`, `evaluator`)은 가동 중이다 — "전량 PENDING·미사용"이라는 옛 서술은 폐기 (2026-08-14 실측).** Droplet 사진품질 크론이 KST 08:30에 채운다. 2026-06-17~08-13에 **11,319장** 평가됨(PASS 10,653 / WARN 590 / FAIL 76). 단 아래 셋을 안 걸면 결과가 뒤집힌다:
+  - **샘플링이다. 전수가 아니다** — 디테일러당 **1예약/일**만 평가한다. "지적 없음"은 *"평가된 건 중 지적 없음"*이지 "무결점"이 아니다. 비율을 낼 때 분모를 세차 전체로 잡지 말 것.
+  - **v1 평가기(~2026-06-15)는 과탐지라 반드시 컷오프** — v1은 WARN 84%(회전 오판·불가능한 기준·빈 사유). `evaluated_at >= '2026-06-17'`을 쓴다. 06-15가 아니라 **06-17**인 이유 = 크론 대상일 off-by-one 버그가 06-16에 고쳐져 그 이전 구간은 평가 대상일이 하루씩 밀려 있다.
+  - `evaluated_at`은 **UTC 저장** — 어드민에서 "오늘" 선택 시 어제 예약이 보이는 것과 같은 이유.
+  - 참고 분포(2026-08-14, §3a 활성 중 평가데이터 보유 59명): **전원이 지적을 1회 이상 받았다.** 최장 무결점 연속 = 평균 9.8일·최대 29일, ≥10일 27명 / ≥20일 4명 / **≥30일 0명**. "무결점 30일" 같은 기준을 세우기 전에 이 분포부터 확인할 것.
 
 **🔴 차량 거래(매매)는 DB에 기록 시스템이 없다 (2026-08-04 전수 확인)**
 
