@@ -1664,6 +1664,10 @@ FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 - ⚠️ `user_point_history`에는 `type` 컬럼이 **없다** — 적립/소진 구분으로 조회하려다 막힌다. 소진 시점 판정은 `user_point.updated_at`.
 - ⚠️ 적립 원천이 섞인다: 리뷰 리워드 3,000원(만료 있음) · **세차권 티어 차액 6,000원**(만료 NULL, §service 참조). 만료 유무로 원천을 가를 수 있다.
 - ✅ **어드민 API는 이미 갈라서 준다** — `GET /v1/admin/users/{userId}` → `payments[]`의 `cashPaidAmount` · `pointPaidAmount` · `refundableCashAmount` · `refundablePointAmount`. **현금/포인트 분해가 필요하면 SQL보다 이 EP가 정답.**
+- 🔴 **구독 해지 환불액은 비례배분이 아니라 "결제액 − 사용분의 1회권 정가"다 (2026-08-14 실측).** `47,400원(월 2회) 중 1회 사용 → 환불 23,700원`으로 계산하면 틀린다. 실제 판정식(zero `PrismaSubscriptionRepository.planOwnedSubscriptionCancel`) = **`max(payment.amount, SUM(payment_medium.amount)) − cancel_amount − 사용세차권_1회권_정가`**. 실사례(user 57550): 결제 47,400 − 외부만 T5 1회권 정가 41,000 = **6,400원**이고 `payment.cancel_amount`와 정확히 일치.
+  - ⟹ **1회권 정가를 모르면 환불액 검증이 불가**하다. 정가 경로 = `car_model.tier_id → car_tier.tier` → `product`(`type='VOUCHER'` + `product_type='TIER_n'` + 같은 서비스명). 티어를 안 맞추면 다른 금액이 나와 "환불 부족"으로 오진한다.
+  - gross basis(`max(amount, medium합)`)는 **포인트 사용 결제에서 필수** — `payment.amount`만 쓰면 포인트가 이중 차감된다(DEV-1240). `payment_medium`이 없는 legacy row만 `payment.amount` 단독.
+  - 해지 시 소멸한 잔여권 지문 = `user_service.delete_reason='subscription cancel refund'`.
 
 ---
 
@@ -1677,11 +1681,15 @@ FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
 | amount / status | 청구액 / **소문자** `'paid'` (⚠️ `payment.status`는 대문자 `'PAID'` — 섞어 쓰면 0행) |
 | fail_reason | 실패 사유. **성공 건은 NULL** |
 | imp_customer_uid | 빌링키(`billing-key-…`) — 자동갱신 카드 식별 |
-| pg_provider / imp_pg_id | 실측 `kpn` / `porthetrive3` (firstpay) |
+| pg_provider / imp_pg_id | 실측 `kpn` / `porthetrive3` (firstpay), `kakaopay` / `CAZQNEKBIF` (간편결제, `pay_method='easy_pay'`) |
 | receipt_url | firstpay 영수증. `mxissuedate`에 **KST 청구시각**이 박혀 있어 tz 교차검증에 쓸 수 있다 |
 
 - 🔴 **"청구 시도조차 안 했다"의 유일한 증거 = 이 테이블에 row가 없는 것.** `payment`엔 실패 row가 남지 않는 경로가 있어, `payment` 부재만으로는 미시도/실패를 못 가른다 → §5d 결제 공백 진단.
 - ⚠️ `started_at`·`paid_at`이 자동갱신 건에선 전부 NULL이다. 청구 시각은 `created_at`(UTC)으로 볼 것.
+- 🔴 **`card_payment_cancel_log`가 비어 있다고 "환불 안 됐다"로 읽지 말 것 (2026-08-14 실측).** 이 테이블은 **레거시(caramel-api) 전용**이고 zero-api 환불 경로는 여기 아무것도 안 남긴다(zero 코드베이스 참조 0건). 실사례: payment 81770이 `PARTIAL_CANCELED`·`cancel_amount=6,400`인데 cancel_log는 0행.
+  - **환불 실행 여부 정본 = `payment.status`(`PARTIAL_CANCELED`/`CANCELED`) + `cancel_amount`.** `refund-orchestrator.service.ts`가 **PG 취소 성공 뒤에만** `applyRefundBatch`를 부르고 실패하면 예외로 중단하므로, `cancel_amount`가 올라가 있으면 PG 취소는 나간 것이다.
+  - ⚠️ `card_payment.cancel_amount`는 환불이 나가도 **0인 채로 남는다**(같은 실사례). 카드 원장이 아니라 `payment`를 볼 것.
+  - 환불 시각 = `payment.modified_at`(**KST 저장** — `created_at`은 UTC라 같은 행에서 tz가 다르다).
 
 ---
 
