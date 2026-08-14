@@ -1511,7 +1511,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | postpaid_yn | tinyint(1) | 0=선불, 1=후불(레거시: 선불권 소진 시 자동생성 후불권) **⚠️ 온보딩 '후불 결제(현장수금)' 예약은 postpaid_yn=0으로 생성됨 — 후불 판별에 이 컬럼 단독 사용 금지, `reservation_onsite_collection` 참조** |
 | applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
 | ended_at | datetime | 세차권 만료일 **⚠️ 무한대 sentinel이 여러 값으로 혼재 — 아래 참조** |
-| delete_reason | varchar | 삭제 사유. 실값 `'삭제 후 새로운 세차권 부여'`(예약취소 반환 재발급) · `'후불 세차권 상계처리 (<us_id>)'`(갱신 상계, 괄호 안이 상계 대상 id) · `'ADMIN_BULK_CANCEL'`. **재발급분과 상계 소멸분을 가르는 유일한 단서** — 이 값 없이 `deleted_yn=1`만 보면 "취소로 반환된 권"과 "상계로 사라진 권"이 같아 보인다 |
+| delete_reason | varchar | 삭제 사유. 실값 `'삭제 후 새로운 세차권 부여'`(예약취소 반환 재발급) · `'후불 세차권 상계처리 (<us_id>)'`(갱신 상계, 괄호 안이 상계 대상 id) · `'ADMIN_BULK_CANCEL'` · `'B2B_CONSOLE_TICKET_REVOKE'`(zero `revokeUnusedAdminUserTickets` = 콘솔 미사용권 회수 API). **재발급분과 상계 소멸분을 가르는 유일한 단서** — 이 값 없이 `deleted_yn=1`만 보면 "취소로 반환된 권"과 "상계로 사라진 권"이 같아 보인다. 🔴 **`NULL`인 채 초 단위 간격으로 한 행씩 지워져 있으면 정식 회수 API가 아니라 운영자가 화면에서 손으로 지운 것** — 이 경로는 `entitlement_package_instance`를 `CANCELLED`로 안 바꿔서 유령 패키지가 `ACTIVE`로 남는다(2026-08-07 반얀 5회권→10회권 교체 실측: 세차권 5 + 옵션 10을 15:45:48~15:46:24에 2초 간격 개별 삭제, instance 5행은 ACTIVE 잔존) |
 
 - ⚠️ **취소 반환 = soft-delete + 새 row 재발급** (기존 row는 `deleted_yn=1`·`reservation_id` 유지, 새 미사용 row 생성) → 상세 §5c.
 - ⚠️ **고객 보유 세차권 수는 `used_yn=0`만 세면 안 된다** (미래예약 선점분 20% 누락) → 상세 §5c.
