@@ -255,6 +255,7 @@ SELECT d.id, d.name, dws.id sched, dws.type, MIN(dwsr.zone_id) zone_db_id,
 FROM detailer d
 JOIN detailer_work_schedule dws ON dws.detailer_id = d.id
   AND dws.effective_from <= ':prev 15:00:00' AND dws.effective_to > ':prev 15:00:00'
+  AND dws.type NOT LIKE 'BANYAN_TREE%'                                  -- 🔴 파견자 배제 (아래 설명)
 JOIN detailer_work_schedule_rule dwsr ON dwsr.schedule_id = dws.id      -- ⚠️ schedule_id 필터 필수
   AND dwsr.day_of_week = ':dow' AND dwsr.deleted_at IS NULL
   AND dwsr.zone_id = :zone_db_id                                        -- ⓿에서 나온 zone.id
@@ -262,6 +263,7 @@ WHERE d.booking_yn = 1 AND d.deleted_yn = 0
 GROUP BY d.id, d.name, dws.id, dws.type ORDER BY cnt;
 ```
 
+- 🔴 **`dws.type NOT LIKE 'BANYAN_TREE%'`를 빼면 반얀 파견자가 후보로 올라온다 (2026-08-17 실측).** 반얀 파견 스케줄의 rule도 **`zone_id = 8`(Z9)** 을 들고 있어서, 존으로만 뽑으면 그날 반얀에 묶여 있는 사람이 Z9 대체 후보로 나온다. 재배정 API는 근무 장소를 검증하지 않으므로 **그대로 200이 떨어지고, 파견 근무창 한복판에 원존 예약을 꽂는 사고**가 된다(그게 바로 이 스킬이 고치러 온 문제다). ⚠️ **같은 사람이 날짜에 따라 파견/정상이 갈린다** — 황석찬114는 9/1엔 Z16 DEFAULT 담당인데 9/4엔 반얀 파견 하나뿐이었다. 사람 단위로 배제하지 말고 **그 날짜의 effective 스케줄 type으로** 판정할 것.
 - ⚠️ **`dwsr.schedule_id = dws.id` 조인을 빼면 남의 rule까지 섞여** 담당하지 않는 사람이 후보로 올라온다.
 - **존 담당자는 보통 3~5명뿐이다.** `day_plan`으로 목표 시각이 비었는지, `holiday`로 그 시각이 막혔는지, `w_start/end_kst`로 근무창에 들어오는지 본다(판정 방법은 3단계).
 - 존 담당자 중 **시각 유지로 가능한 사람이 있으면 거기서 끝난다.** 더 가까운 남의 존 사람이 있어도 그쪽으로 넘어가지 않는다.
@@ -544,6 +546,8 @@ curl -s -X POST "$GW/careplus/message/send/v2" \
 
 | 함정 | 실제로 무슨 일이 나는가 |
 |---|---|
+| 존 후보 쿼리에서 파견자를 안 뺀다 | 반얀 파견 rule도 `zone_id=8`이라 파견자가 Z9 후보로 올라온다. API는 200을 주고, 파견 근무창 한복판에 원존 예약이 꽂힌다 |
+| 파견자를 사람 단위로 기억해 배제한다 | 같은 사람이 날짜에 따라 파견/정상이 갈린다(황석찬114: 9/1 Z16 정상, 9/4 반얀 전용). 그 날짜 effective 스케줄 type으로만 판정 |
 | 휴무 memo를 안 보고 옮긴다 | 그 일을 하러 가려고 비운 날인데 그 일감을 남에게 흩어놓는다 |
 | memo 꼬리(`- 강`·`(안)`)를 일감으로 읽는다 | 등록자 서명인데 일감으로 오독해 판정이 뒤집힌다 |
 | 묶음을 쪼갠다 | 한 장소 4대를 4명이 각자 왕복한다 |

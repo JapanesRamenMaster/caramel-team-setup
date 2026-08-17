@@ -341,6 +341,7 @@ WHERE r.id=?;
 
 **셀(cell) 소속 — `detailer_supply_sheet.cell_name` (⚠️ zone과 다른 축)**:
 - 셀장 판별 = `position='셀장' AND status='현직'`. 셀원 = `cell_name = <셀장 이름>` (같은 status 조건).
+- ⚠️ **`status='현직'`만 걸면 파견 셀장이 조용히 빠진다** (2026-08-14 실측: 셀장 현직 6 + **파견 2** = 8, 8명 모두 §3a 활성 65명 안에 있다). 코드 선례(`prisma-auth.repository.ts`·`prisma-admin-wow-flow.repository.ts`)는 전부 현직만 잡는다 — 그게 맞는 건 "지금 그 존을 맡은 셀장" 판정일 때뿐이다. **공지·알림처럼 "셀장 전원에게 도달"이 목적이면 `status IN ('현직','파견')`**. 목적을 안 정하고 선례를 복사하면 2명이 영구 누락된다.
 - ⚠️ **한 셀이 여러 zone(region)에 걸친다.** cell_name ≠ region/zone. 예: 이승원 셀 = Z1·Z6·Z17 3개 zone에 멤버 분산. 셀장 본인 `region`(Z1)은 셀장이 일하는 zone 하나일 뿐 셀 커버리지가 아님.
 - 셀원 명단: `WHERE cell_name='<셀장>' AND status='현직'` — zone/region으로 셀을 재구성하려 하면 누락(타 zone 셀원)+혼입(같은 zone 타 셀원)이 동시에 발생.
 - 파견 셀(오토랩·헤이딜러·인천테슬라 등)은 region이 Z코드가 아닌 텍스트.
@@ -439,6 +440,8 @@ GROUP BY s.detailer_id, d.name ORDER BY min_km;
 - ⚠️ **배정 당시엔 존 외가 아니었을 수 있다** — 판정은 "지금 스케줄"이 아니라 **예약 생성 시점의 effective 스케줄**(`effective_from <= 생성시점 < effective_to`)로. 지금 기준으로 존 외라고 오배정 선언하지 말 것.
 - 🔴 **근무창 *안*이어도 이동시간 때문에 불가능해진다 — 휴무·근무창 감사 어느 쪽에도 안 걸리는 세 번째 유형 (2026-08-06 실측).** 한수용(191)이 반얀 **오전조→오후조**(sched 898 `BANYAN_TREE_EXTENDED`, 8/3~8/9 KST 16~21)로 재편성되자 원존(Z16 고덕) **18:00** 예약이 파견 근무창 **안**에 남았다. `detailer_holiday` **0건**이고 근무창 이탈도 아니라 위 두 감사(장소 불일치·교대창 이탈)를 **모두 통과**한다. 실제로는 16:00 반얀 90분 → 17:30 종료 + 장충동→고덕 20km(35~45분) = 18:10 도착으로 불가. ⟹ **파견 감사 조건에 이걸 추가할 것: `파견지 직전 예약 종료시각 + 파견지→목표 이동시간 > 목표 시각`.** 파견 근무창을 **시간대만 옮기는**(오전조↔오후조) 재편성이 이 유형을 만든다 — 날짜·장소·건수가 그대로라 눈에 안 띄고, 디테일러가 전날 전화해서야 드러난다.
   - 🔴 **파견 감사는 반드시 스케줄 토막을 *전수*로 뽑고 시작할 것 — "지금 유효한 한 토막"을 파견 전체로 읽으면 남은 충돌을 통째로 놓친다 (2026-08-06 실수).** 한수용 파견은 **7/20~9/4**인데 `effective_from <= X AND effective_to > X`로 **오늘 것 한 토막(8/3~8/9)만** 뽑고 "파견은 8/9까지"로 단정해, 9/1·9/4 잔존 3건을 "없음"으로 보고했다(사용자가 잡아냄). 실제 편성은 **주 단위 8토막이고 오전조(08~16)/오후조(16~21)가 번갈아** 든다(811·855 오전 → 898 오후 → 899 오전 → 900 오후 → 901 오전 → 902 오후 → 807 복귀). ⟹ 진입 쿼리는 `WHERE detailer_id=? AND type LIKE 'BANYAN_TREE%'` **전체 토막 + 각 토막 rule의 `start_time`/`end_time`**을 먼저 펼쳐 보고, 예약 감사는 예약 1건마다 **그 시점에 유효한 토막**을 조인해서(`dws.effective_from < r.reservation_datetime AND dws.effective_to > r.reservation_datetime`) 근무창을 판정한다. 토막 사이 **공백일**(한수용 7/29)도 이때 드러난다.
+- 🔴 **2026-08-06 이후 잔존 tail은 자동으로 안 없어진다 — 셔플이 파견조를 통째로 제외하기 때문 (2026-08-17 확인).** caramel-api PR #525→#526(main `c3194e2e`, prod)이 `shuffleTargets` 필터에 `workScheduleType !== 'BANYAN_TREE'`(prefix 매칭이라 `_EXTENDED` 포함)를 넣어 파견조는 **assignment 자체가 안 생긴다 = 내보내기·받기 양쪽 차단**. 유입(반얀 밖 예약이 파견조로 새로 들어옴)은 이걸로 멈췄지만, **파견 편성 전에 이미 배정돼 있던 반얀 외 예약은 셔플이 회수해 가지 못하고 파견 종료일까지 그대로 남는다**(당시 의도적으로 택한 트레이드오프). ⟹ 파견 편성 시점에 **사람이 스윕하지 않으면 영구 잔존**이다. 실사례: #85607(김요한 8/18 12:00 옥수동)이 7/6 자동예약으로 임사명193에 배정 → 7/30에 그의 8/17~8/23 반얀 파견 스케줄 생성 → 아무도 회수 안 함 → 전날 셀장이 발견.
+- 🔴 **파견조 예약의 대체 후보를 뽑을 땐 `dws.type NOT LIKE 'BANYAN_TREE%'`를 반드시 넣어라 (2026-08-17 실측).** 반얀 파견 스케줄의 rule도 **`zone_id = 8`(Z9)** 을 들고 있어서, 존으로만 후보를 뽑으면 **파견자 본인과 동료 파견자가 자기 대체 후보로 올라온다**(8/18 Z9 후보 쿼리에서 실제로 발생). 집계 왜곡판(아래 §대시보드 주의)과 같은 원인인데, 재배정에서는 왜곡이 아니라 **못 가는 사람에게 배정하는 사고**가 된다.
 - 🔴 **잔존 예약은 "원존 예약"만이 아니다 — 같은 장소 안에서 근무창을 쪼개도 발생한다 (2026-07-27 실측).** 한 장소를 오전/오후 2교대로 분할하면 **분할 전 생성된 그 장소 예약이 교대창 밖으로 떨어진다.** 실사례: 반얀 09·10·11시 예약 4건이 오후조(KST 14~21)인 이형준161·임사명193·박현규207에 잔존 — created 7/13~7/15로 2교대 편성(7/19) 전이고, 당시엔 기본 `BANYAN_TREE` 그리드(09·11시)가 열려 있었다. ⟹ **근무창 감사에 "장소가 맞는 건"도 반드시 포함할 것.** 장소 필터(`location` 불일치)만으로 잔존을 찾으면 이 유형이 통째로 안 보인다.
 
 ---
@@ -728,7 +731,7 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
 - 즉 **`+ INTERVAL 9 HOUR` 변환이 필요하다.** `DATE_FORMAT`으로 뽑은 문자열을 KST로 읽으면 9시간 어긋난다.
 - ⚠️ **이 오기가 실제로 사고를 냈다 (2026-08-06):** 티켓 러너 세션이 이 문장을 믿고 정상적인 티켓 본문(`10:38 KST`)을 `01:38 KST`로 "정정"했다. 같은 날 다른 세션은 SENS 응답의 KST `requestTime`과 19,606행 대조로 UTC임을 독립 확인했다.
 - (구 서술: "MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST라 `created_at`/`modified_at`은 KST 벽시계, 2026-07-12 실측" — 최소 2026-05 이후 데이터에선 성립하지 않는다. `modified_at`은 이번에 따로 재측정하지 않았으므로 아래 §7 "`modified_at` tz 지문" 항목은 쓰기 전에 재검증할 것.)
-- **디테일러 재배정 역추적 시그니처**: 재배정 전용 이력 테이블/로그 type은 없다. `modified_at`이 **17:00분대 = 셔플 크론(매일 17시 KST)이 detailer_id 변경**한 것, 17시대 후반(예 17:51) = 사람이 어드민에서 재배정했을 개연성 (2026-07-13 임세혁 셔플 진단 실사례).
+- **디테일러 재배정 역추적 시그니처**: 재배정 전용 이력 테이블/로그 type은 없다. `modified_at`의 **정각 분대 = 셔플 크론이 detailer_id 변경**, 그 직후 분대(예 :51) = 사람이 어드민에서 재배정했을 개연성 (2026-07-13 임세혁 셔플 진단 실사례). 🔴 **크론 시각은 2026-07-30부로 17시 → KST 14시**(PR #515) — 지문은 `HOUR(modified_at)=14 AND MINUTE(modified_at)=0`이고, 그 이전 날짜를 조사할 때만 17시를 쓴다. `modified_at`은 **KST 저장**이라 `+9h` 하지 말 것.
   - 🔴 **단 "change_log엔 아예 안 남는다"는 반쪽 진술이다 — 두 경로를 함께 봐야 한다 (2026-07-27 예약 #79702 실측 교정).**
     - **고객이 날짜를 바꾸면서 디테일러도 바뀐 경우는 남는다**: `RESERVATION_DATETIME_CHANGED` row의 `data` JSON에 `fromDetailerId`/`toDetailerId`가 같이 실린다(#79702: 고객이 7/27→7/28 변경하며 78 이승제→88 강지성). **재배정 전용 `data.type`이 없어서 datetime 로그 안에 숨어 있다** — `data.type`으로 재배정을 찾으면 못 찾는다. `WHERE JSON_EXTRACT(data,'$.toDetailerId') IS NOT NULL`로 잡을 것.
     - **셔플 크론·어드민 단독 재배정은 안 남는다**: 같은 #79702가 다음날 17:00 셔플로 88→78 되돌아왔는데 change_log엔 row 0건. 이건 `modified_at`으로만 추적된다.
@@ -862,7 +865,9 @@ first_sub_reservations AS (
 ### 6b. 공급량
 
 **테이블 구조**
-- `detailer_work_schedule`: detailer_id, effective_from, effective_to
+- `detailer_work_schedule`: detailer_id, effective_from, effective_to, type, description, slot_id
+  - ⚠️ **`deleted_at` 컬럼이 없다** (soft-delete는 `_rule`에만 있다). 헤더에 `dws.deleted_at IS NULL`을 붙이면 `Unknown column`으로 쿼리가 죽는다 — 헤더 무효화 관례는 `effective_from = effective_to`(아래 참조)다.
+  - ⚠️ **`description`의 기간 문자열을 파견 기간으로 읽지 말 것 (2026-08-17 실측).** 로테이션 보조 파견은 desc에 사이클 전체를 적고 row는 **하루짜리**인 경우가 정상이다(sched 924 desc `반얀 파견 오전조(1~4타임) 08-17~08-20` → 실제 effective는 KST 8/20 하루 / sched 861 desc `8/18~8/20` → 8/20 하루). 기간 정본은 `effective_from`/`effective_to`뿐이고, desc를 믿으면 있지도 않은 파견일을 감사 대상에 넣는다.
 - `detailer_work_schedule_rule`: schedule_id, day_of_week(MON~SUN), start_time, end_time (UTC), zone_id
   - `deleted_at IS NULL` 조건 필수
 
@@ -892,6 +897,7 @@ first_sub_reservations AS (
 **슬롯 가용 판단**
 - X시 슬롯 공급 가능 = rule의 `start_time(KST) ≤ X시` AND `end_time(KST) ≥ X+1시`
 - **`effective_from~to` 범위만 체크하면 과대 카운트** — 반드시 해당 요일의 rule 존재 여부를 함께 확인
+- 🔴 **그 "존재"는 `deleted_at IS NULL` 기준이다 — 활성 rule이 0개인 유효 스케줄이 실재한다 (2026-08-14 실측).** `detailer_work_schedule_rule` 14,776행 중 **3,060행(20.7%)이 soft-delete**다. 스케줄 헤더는 effective 구간 안인데 그 요일 rule이 전부 삭제된 경우가 있어(홍세영123 sched 236 = 그날 rule 3개 전부 삭제 / 김형현169 sched 817 = 15행 중 10행 삭제·활성 5행 유지), `deleted_at`을 빼면 **근무 안 하는 사람을 "정상 근무"로 센다.** 반대로 `COUNT(rule)`만 세면 삭제분까지 세어 존·근무창이 있다고 오독한다. 근무 판정·존 판정·부하 랭킹 전부 `ru.deleted_at IS NULL`을 붙이고, **활성 rule 0개면 "그날 근무 없음"으로 취급**할 것.
 
 **effective 경계 저장 컨벤션 (스케줄 생성/수정 시)**
 - KST 자정 경계를 UTC로 저장: **D일부터 유효 = effective_from `'(D-1) 15:00:00'`**, 영구 = effective_to `'2099-12-30 23:59:59'`.
@@ -950,15 +956,25 @@ first_sub_reservations AS (
 - ⟹ 재배정 대상을 고를 땐 아래를 **직접** 걸 것: ①Active 4조건(§3a: `booking_yn=1·retired_yn=0·deleted_yn=0·direct_yn=1`) ②출장 재배정이면 `supply_sheet.region <> '오토랩'`(고정샵은 필드 안 돎) ③대상 시각이 `detailer_holiday`(부분휴무 포함, from~to 둘 다 UTC 직접비교) 안에 없음 ④그 시각 겹치는 CONFIRMED 예약 없음 ⑤더미 `132/125/168` 제외.
 - 🔴 **"그날 예약 0건 = 여유 있음"이 아니다 (2026-08-06 실측).** 2026-08-07 예약 0건인 디테일러 8명 중 7명이 연차·퇴사예정이었다(한홍구·김승규·남경우·김민호·김남용·장태훈·이승제). 건수로 인계처를 고르면 **가장 안 되는 사람만 뽑힌다.** 후보는 위 ①~⑤ + effective 스케줄 존재를 먼저 통과시킨 뒤 건수로 정렬할 것.
 - ⚠️ **실제 테이블명은 `detailer_supply_sheet`** (문서·구두로 "supply_sheet"라 부르지만 `SHOW TABLES LIKE '%supply%'`엔 `detailer_supply_sheet`·`detailer_supply_load_log`·`detailer_supply_weekly_snapshot`뿐). 유용 컬럼: `name`·`status`·`cell_name`(셀장)·`region`(Z번호)·`phone_norm`·**`home_address`(자택, 디테일러 출퇴근 동선 판단용)**·`car_plate`·`batch`(기수)·**`hire_date`(입사일)**·`work_start_date`(실투입일)·`retired_date`. ⚠️ `name`·`phone_norm` 비교 시에도 **`COLLATE utf8mb4_general_ci` 양쪽에 붙일 것** — 안 붙이면 `Illegal mix of collations`로 죽는다.
+- 🔴 **이 테이블은 사본이다. SOT는 시트, DB는 매일 1회 전량 덮어쓰기 (2026-08-16 실측).** 시트 `1jAoHuZRjoQ0W2Amsf1rUvxMSwMsqO9L_BJuWW0YQrSw` "공급 현황" 탭에 붙은 **바운드 Apps Script**(`loadDetailerSupplyToDB`)가 매일 12:38 KST에 142행을 읽어 `detailer_supply_sheet`(+`_weekly_snapshot`)에 UPSERT한다. **DB 행을 직접 UPDATE하면 다음 실행에 덮여 사라진다** — 고칠 값은 시트에서 고칠 것. 바운드 스크립트라 clasp 프로젝트(`~/claude/*-gas-live`)엔 없다.
+- **적재 가동/신선도 판정 = `detailer_supply_load_log`** (`started_at`·`total_rows`·`inserted_rows`/`updated_rows`·`error_message`). 값이 이상하면 쿼리를 의심하기 전에 여기부터 볼 것.
+  ```sql
+  SELECT TIMESTAMPDIFF(HOUR, MAX(started_at), NOW()) hours_ago,
+         (SELECT COUNT(*) FROM detailer_supply_load_log WHERE DATE(started_at)=CURDATE()) today
+  FROM detailer_supply_load_log;   -- 정상 = hours_ago<24, today=1
+  ```
+  ⚠️ **판정은 서버가 계산한 값으로**(`TIMESTAMPDIFF`·`COUNT`). JSON에 찍힌 시각 문자열을 눈으로 읽으면 §직렬화 함정(표시값 = 저장값−9h)에 걸리고, KST로 저장된 컬럼에 `CONVERT_TZ('+00:00','+09:00')`까지 씌우면 **이중 변환**돼 날짜가 하루 어긋난다. 2026-08-16 실측 `hours_ago=34, today=0` = 그날 적재 누락.
+- 🔑 **`*_load_log` 패턴은 외부 적재기 공통 지문이다.** 어떤 테이블이 시트/외부에서 적재되는지 찾을 땐 코드가 아니라 DB에서 역추적할 것 — `information_schema.TABLES WHERE TABLE_NAME LIKE '%_load_log%'`. 현재 `detailer_supply_load_log`(가동)·`complaint_log_load_log`(휴면, 마지막 2026-05-18) 2개. 전체 지도는 아래 §외부 적재 테이블.
 - 🔴 **디테일러 근속·입사일 정본 = `detailer_supply_sheet.hire_date`. `detailer.created_at`을 쓰면 틀린다 (2026-08-14 실측).** `detailer`엔 입사일 컬럼이 아예 없고 `created_at`은 행 생성일이다 — 최솟값이 2024-12-17(테이블 이관 흔적)이라 실제보다 근속이 짧게 나온다(김희헌80: row 2025-02-13인데 첫 WASHED 2024-05-06 = 9개월 손실). **`schema.prisma`에 없는 GAS 동기화 테이블이라 Prisma만 보면 "입사일 데이터가 없다"고 오판하기 쉽다**(실제로 그렇게 오판했다). `hire_date`는 `batch`·첫 세차와 정합(이승원21 12-18 입사 → 12-27 첫 세차). ⚠️ 활성 65명 중 1명 미매칭 + 김희헌 1건 어긋남 → **`created_at` 폴백 금지, 예외는 수동 확인.** 참고 분포(2026-08-14, §3a 65명): 근속 1년+ 19명 · **2년+ 0명 · 3년+ 0명** — 결함이 아니라 직영 조직이 2024-12(1기) 시작이라 사실이다.
 - 현직 판별: `detailer_supply_sheet.status='현직'`이 정본(퇴사/하차/삭제/교육중 제외). ⚠️ `detailer.retired_yn`은 미신뢰 — 실제 퇴사자도 0인 경우 있음(주진우147, retired_yn=0인데 booking_yn=0·supply_sheet 퇴사). `booking_yn=0`이 실질 비활성 시그널. supply_sheet 조인=phone `REPLACE(phone,'-','') COLLATE utf8mb4_general_ci`, `status IS NULL`=로스터 누락(퇴사 아님, 확인 필요).
 - ⚠️ **반얀 파견 예외**: 반얀 파견 디테일러(`detailer_work_schedule.type LIKE 'BANYAN%'`, 예 `BANYAN_TREE_EXTENDED`)는 정상근무 차단용 **종일 휴무**가 걸려도 그날 배정된 **반얀 예약(장충단로 60)은 본인 담당** → 휴무충돌 감사·재배정 대상에서 제외(2026-07-24 이형준161 사례).
 - ⚠️ **반얀 예약 매칭은 `LIKE '%장충단로 60%'` 금지** — '장충단로 600'·'장충단로 60길'을 오탐한다. **`location REGEXP '장충단로 ?60($|[^0-9길])'`** 를 쓸 것(공백 없는 '장충단로60'까지 커버, caramel-zero `isBanyanAddress` 정규식과 같은 기준). ⚠️ 파이썬 `mysql.connector`로 실행할 때 `%`가 들어가면 이스케이프 함정이 있으니 REGEXP가 안전하다.
-- ⚠️ **"이 예약이 셔플(17시 동선 재배정) 대상인가"는 DB 컬럼만으로 판정할 수 없다 (2026-07-26 확정).** `reservation.allow_shuffle_yn`(DEFAULT 1)은 *옮겨지는 예약* 쪽만 막는다 — 코드의 move 로직은 **받는 디테일러를 보지 않는다**(swap은 양쪽 예약을 본다). 즉 `allow_shuffle_yn=0`으로도 "그 디테일러에게 다른 예약이 들어오는 것"은 못 막는다(실사례: 2026-07-24 셔플이 을지로 예약 81101을 반얀 파견조 정순욱187에 배정). 반대로 반얀 예약은 **주소 문자열 게이트**(`user_address`의 address+building_name+jibun_address에 '반얀트리'/'장충단로 60'/'장충동2가 201' 포함 여부)로 이미 이동이 막혀 있어 `allow_shuffle_yn=1`이어도 안 옮겨진다. → 셔플 영향 판정은 반드시 코드 게이트(`libs/route-optimization`)를 함께 확인.
+- 🔴 **셔플은 2026-07-30부터 17시가 아니라 KST 14시다** (caramel-api PR #515, main `634d562`, prod 반영). 아래 항목들과 §재배정 역추적의 "17시" 서술은 그 이전 기준이니 **`modified_at` 지문은 `HOUR=14 AND MINUTE=0`**으로 볼 것. 그리고 **2026-08-06부터 파견조(`type LIKE 'BANYAN_TREE%'`)는 셔플 대상에서 완전 제외**됐다(#525/#526, main `c3194e2e`) — 아래 "파견조에 새 위반이 계속 생긴다"는 서술은 그 이전 상태다(§3d 참조).
+- ⚠️ **"이 예약이 셔플(당시 17시, 현재 14시 동선 재배정) 대상인가"는 DB 컬럼만으로 판정할 수 없다 (2026-07-26 확정).** `reservation.allow_shuffle_yn`(DEFAULT 1)은 *옮겨지는 예약* 쪽만 막는다 — 코드의 move 로직은 **받는 디테일러를 보지 않는다**(swap은 양쪽 예약을 본다). 즉 `allow_shuffle_yn=0`으로도 "그 디테일러에게 다른 예약이 들어오는 것"은 못 막는다(실사례: 2026-07-24 셔플이 을지로 예약 81101을 반얀 파견조 정순욱187에 배정). 반대로 반얀 예약은 **주소 문자열 게이트**(`user_address`의 address+building_name+jibun_address에 '반얀트리'/'장충단로 60'/'장충동2가 201' 포함 여부)로 이미 이동이 막혀 있어 `allow_shuffle_yn=1`이어도 안 옮겨진다. → 셔플 영향 판정은 반드시 코드 게이트(`libs/route-optimization`)를 함께 확인.
 - 🔴 **운영이 슬랙에서 말하는 "이 예약 고정돼 있어요" = `reservation.allow_shuffle_yn=0`이며, "이 디테일러로 고정"이라는 뜻이 아니다 (2026-08-06 확립).** 어드민 콘솔 고정 버튼 = `pinNoShuffle(userId)`(zero `prisma-console-reservation-schedule.repository.ts`)이고, **유저 단위로** 그 사람의 활성 예약(CONFIRMED/IN_PROGRESS) 전부에 `allow_shuffle_yn=0`을 박는다. 담당자를 지정하는 필드가 **아니고, 수동 재배정을 막지도 않는다**(셔플 크론만 제외).
   - ⟹ "고정이라 못 옮긴다"는 보고를 그대로 받지 말 것. **검증법 = 그 고객의 과거·미래 예약 담당자 명단을 뽑는다**(`WHERE user_id=? ORDER BY reservation_datetime`). 매회 담당자가 다르면 고정 아님 → 인계 가능. 실사례: 8/7 잠실 건이 "고정"으로 보고됐으나 같은 고객의 9건이 남경우·진정철·이형준·고대진으로 제각각이었다.
   - ⚠️ 부작용: 이 플래그가 걸린 예약은 **셔플이 교정하지 못해 존 외 배정이 그대로 남는다**. 존 외 예약 진단 시 `allow_shuffle_yn`을 함께 뽑을 것(2026-08-07 예약 159건 중 0인 건 23건=14.5%).
-  - 🔴 **이 누수는 진행형이다 — 1회성 청소로 끝나지 않는다 (2026-07-27 재발 실측).** 같은 패턴이 7/27 17:00:22에도 발생(#87098 반얀 16시 → 오전조 08~16인 정순욱187 = 근무 종료 경계 초과). 파견기간 중엔 **매일 17시 이후 새 위반이 생길 수 있으므로 주기 점검**이 필요하다(파견 tail 일괄 재배정과 별개 처방). 반얀 장소 예약도 안전하지 않다 — 장소 게이트는 이동을 막지만 **근무창은 아무도 안 본다.**
+  - 🔴 **이 누수는 진행형이었다 — 다만 파견조 한정으로는 2026-08-06에 멈췄다.** 같은 패턴이 7/27 17:00:22에도 발생했고(#87098 반얀 16시 → 오전조 08~16인 정순욱187 = 근무 종료 경계 초과) 당시엔 매일 셔플 후 새 위반이 생겼다. **#525/#526(main `c3194e2e`, 2026-08-06 prod) 이후 파견조는 셔플이 아예 안 건드리므로 이 유형의 신규 발생은 없다** — 대신 기존 tail이 자동 회수되지 않고 남는다(§3d). **파견조가 아닌 디테일러에는 이 경고가 그대로 유효**하다. 반얀 장소 예약도 안전하지 않다 — 장소 게이트는 이동을 막지만 **근무창은 아무도 안 본다.**
 
 **주말 데이터 주의**
 - 주말 디테일러 2~3명 → fill rate 스윙이 큼
@@ -1352,6 +1368,40 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - **크론 실행 기록 = `job_execution`**(`job_id`→`job.name`, telephony 크론 8종). ⚠️ **status='FAILED'여도 장애 단정 금지** — 유저 1명 실패해도 execution 전체가 FAILED로 기록됨. `result` JSON의 `failureCount`/`successCount`를 먼저 볼 것.
 
 ---
+
+## 6z. 외부 적재 테이블 — 앱이 안 쓰는 것들 (2026-08-16 전수)
+
+> **판별법**: prod DB에 있는데 `schema.prisma`에 없으면 외부 적재/수동 테이블이다. 실측 268개 중 **34개**가 여기 해당. 앱 코드를 아무리 뒤져도 이 테이블들의 갱신 주체는 안 나온다.
+> ```sql
+> SELECT TABLE_NAME FROM information_schema.TABLES
+> WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE';   -- prisma model 목록과 diff
+> ```
+
+**A. 시트 → DB (Google Apps Script가 쓴다)**
+
+| 테이블 | 적재기 | 주기 |
+|---|---|---|
+| `detailer_supply_sheet` `_weekly_snapshot` `_load_log` | **바운드 스크립트**(공급 현황 시트) | 매일 12:38 |
+| `google_daily_performance` | `syncGoogleAdsSpendToDB` (marketing-gas-live) | 매일 10:00 |
+| `naver_daily_performance` | `syncNaverSpendToDB` | 매일 10:00 |
+| `airbridge_daily_install` | `syncAirbridgeInstallToDB` | 매일 11:00 |
+| `meta_daily_performance` | 마케터 계정 GAS | 매일 (소유자 계정에서만 보임) |
+| `complaint_log` `complaint_log_load_log` | `loadComplaintsToDB.gs` | **휴면** (마지막 2026-05-18, 총 5회 수동) |
+
+**B. DB → DB 스냅샷 (GAS가 prod를 읽어 prod에 캐시)** — 시트 안 거침(`getSheetByName` 0회)
+
+`cbr_daily_revenue_snapshot` · `cbr_cohort_repurchase_snapshot` · `cbr_daily_time_compliance_snapshot`(02:00) / `cbr_detailer_daily_productivity_snapshot`(02:30) / `cbr_first_wash_cohort_snapshot`(03:00) / `cbr_daily_option_snapshot`(03:30) / `cbr_daily_wash_sequence_snapshot`(04:00)
+
+⚠️ **스냅샷은 원본이 아니다.** 값이 이상하면 스냅샷을 고치지 말고 원본 쿼리를 재실행해 대조할 것.
+
+**C. 그 외 (앱 밖에서 관리 — 갱신 주체 미확정 포함)**
+
+`manual_wash_adjustment`(외부운영 세차 수기) · `price_reference`(가격 검수) · `quote_version` `quote_version_item`(견적) · `banyan_presentation` · `opportunity` · `user_acquisition_channel` · `user_utm_criteria` · `wash_plan_monthly` · `_region` · `b2b_console_account`(0행) · `heydealer_daily_report`(0행) · `ssot_*` 6종(0행, 드로플릿 `/opt/ssot`에 INSERT문은 있으나 prod 적재 흔적 없음 — **미가동 추정, 미확정**) · `_prisma_migrations`(Prisma 내부)
+
+**D. prod DB에 쓰지 *않는* 자동화** (혼동 방지)
+- **카이사르**(scrum-linear-bridge) — DB 접점 0. Linear + Slack + Upstash KV.
+- **차비스 드로플릿 크론 26개** — `.env`가 `DB_USER=readonly_user`라 SQL 쓰기가 구조적으로 불가. prod 변경은 API 경유뿐(`retouch_dispatch` 배정, `qa_reservation_autocancel` 취소).
+- **`jyc-gas-live`**(2번째 GAS 프로젝트, "최재윤 이사님 VIP" 시트) — 매시 **DB→시트** 읽기 전용.
 
 ## 7. 주요 테이블 컬럼 치트시트
 

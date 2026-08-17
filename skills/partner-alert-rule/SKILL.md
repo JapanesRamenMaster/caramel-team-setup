@@ -52,9 +52,11 @@ API로 할 때는 `caramel-admin-api` 스킬의 `PATCH /v1/admin/users/{userId}`
 
 ### 파일
 
-`apps/api/src/domains/reservation/infrastructure/persistence/notification/slack-reservation-ops-notification.repository.ts`
+`apps/api/src/domains/reservation/infrastructure/persistence/notification/partner-vip-alert.rules.ts`
 
-`export const PARTNER_VIP_ALERT_RULES` 배열 (2026-08-12 기준 70줄 - 180줄, 규칙 9개, 마지막이 `프리미엄 세차권`).
+`export const PARTNER_VIP_ALERT_RULES` 배열 (규칙 9개, 마지막이 `프리미엄 세차권`).
+
+⚠️ **2026-08-14에 이 파일로 분리됐다.** 예전엔 `slack-reservation-ops-notification.repository.ts` 안에 있었다. 20시 크론의 미판정 훑기(#1558)가 같은 규칙을 써야 해서 슬랙 어댑터에서 떼어냈다 — 즉 **규칙 한 줄이 슬랙 카드와 크론 훑기 양쪽을 동시에 바꾼다.**
 
 ⚠️ **코드를 읽을 땐 `origin/main`을 쓴다.** 로컬 `main`은 거의 항상 낡아 있다 — `git show main:<경로>`가 심볼을 못 찾으면 코드가 없는 게 아니라 참조가 stale인 것이다(2026-08-12에 실제로 이걸로 헛짚었다). 진실은 `git fetch && git show origin/main:<경로>` 또는 `git ls-remote`.
 
@@ -87,7 +89,7 @@ API로 할 때는 `caramel-admin-api` 스킬의 `PATCH /v1/admin/users/{userId}`
 
 `프리미엄 세차권`을 앞으로 옮기면 "유입경로가 더현대인 고객이 프리미엄 패키지로 예약"했을 때 제휴처 채널이 아니라 **디테일러방·마케팅방으로 새어나간다.** 이게 이 기능의 유일한 "잘못된 방으로 새는" 사고 모드다.
 
-테스트로 잠겨 있다 — 같은 디렉터리 `slack-reservation-ops-notification.repository.spec.ts`의 `PARTNER_VIP_ALERT_RULES 배열 순서 잠금` describe. 순서를 깨면 CI가 빨간불이 된다.
+테스트로 잠겨 있다 — 같은 디렉터리 `slack-reservation-ops-notification.repository.spec.ts`의 `PARTNER_VIP_ALERT_RULES 배열 순서 잠금` describe(규칙 상수는 옆 파일로 분리됐지만 순서 잠금 스펙은 여기 남아 있다). 순서를 깨면 CI가 빨간불이 된다.
 
 ### 새 슬랙 채널로 보낼 때
 
