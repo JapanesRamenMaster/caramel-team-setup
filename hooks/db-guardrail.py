@@ -5,12 +5,21 @@ DROP TABLE / DROP DATABASE / TRUNCATE / prisma --accept-data-loss 등
 되돌릴 수 없는 DB 파괴 패턴을 bypassPermissions · autoMode 무관하게 차단한다.
 
 설계 원칙:
-- CREATE TABLE, ALTER TABLE ADD/MODIFY (추가성 DDL)는 통과.
-- DROP TABLE, DROP DATABASE, TRUNCATE, DROP COLUMN 은 무조건 deny.
+- 스키마를 바꾸는 DDL(CREATE/ALTER/DROP/RENAME/TRUNCATE)을 DB에 직접 실행하는 것은
+  추가성이든 파괴적이든 전부 deny. 정규 경로는 prisma migrate 뿐이다.
 - prisma --accept-data-loss / migrate reset / --force-reset 은 무조건 deny.
 - 파일에 SQL을 쓰는 행위(echo "DROP..." > file.sql)는 실행이 아니므로 통과.
-  → mysql/prisma 실행 컨텍스트가 있을 때만 차단.
+  → DB 실행 컨텍스트가 있을 때만 차단.
+- SHOW CREATE TABLE 같은 읽기는 통과.
 - 오탐보다 과차단을 선택한다. 막혔으면 직접 터미널에서 실행.
+
+2026-08-13 확장 이유: 이 훅은 원래 "데이터 손실 방지"만 목표라 추가성 DDL을 일부러
+통과시켰다. 그 구멍으로 detailer_post 3개 테이블을 mysql-query.sh로 직접 만들었고,
+_prisma_migrations에 기록이 없어 공유 dev DB가 drift 상태가 됐다(다음 사람의
+migrate dev가 리셋을 제안한다). prisma-migration-guard.py는 migration.sql '파일 쓰기'만
+막아서 이 경로는 검사조차 안 됐다.
+또한 인터프리터(python + mysql.connector 등) 경로는 MYSQL_EXEC에 안 걸려
+파괴적 DDL조차 통과했다 — 그쪽도 함께 막는다.
 """
 import json
 import re
@@ -68,6 +77,63 @@ PRISMA_PUSH_MIGRATE = re.compile(
 WRONG_REPO_PRISMA = re.compile(
     r"libs/caramel-prisma|caramel-api\b",
     re.IGNORECASE,
+)
+
+# 6. DB 실행 컨텍스트 (MYSQL_EXEC보다 넓다)
+#    mysql 계열 헬퍼·CLI에 더해, 인터프리터로 드라이버를 태우는 경로까지 본다.
+#    python devq.py "CREATE TABLE ..." 처럼 스크립트에 SQL을 넘기는 것도
+#    인터프리터 호출이므로 걸린다 — 과차단이 누락보다 싸다.
+DB_EXEC = re.compile(
+    r"(?:"
+    r"mysql(?:-query|-write)?(?:\.sh)?"
+    r"|\bmysql\b(?:\s+-\w+)*\s+-e\b"
+    r"|\bmysql\b[^|;&]*<<"
+    r"|mysql\.connector|pymysql|mysql2|mariadb|sqlalchemy|psycopg"
+    r"|\b(?:python3?|node|deno|bun|ruby|perl)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# 7. 스키마를 바꾸는 DDL. 추가성도 포함한다 — 정규 경로는 prisma migrate 뿐이다.
+SCHEMA_DDL = re.compile(
+    r"\b(?:"
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+|FULLTEXT\s+|SPATIAL\s+)?"
+    r"(?:TABLE|INDEX|DATABASE|SCHEMA|VIEW)"
+    r"|ALTER\s+(?:TABLE|DATABASE|SCHEMA)"
+    r"|DROP\s+(?:TABLE|DATABASE|SCHEMA|COLUMN|INDEX|VIEW|CONSTRAINT|FOREIGN\s+KEY)"
+    r"|RENAME\s+TABLE"
+    r"|TRUNCATE(?:\s+TABLE)?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# 읽기 전용이라 DDL로 보면 안 되는 것. 검사 전에 지운다.
+READ_ONLY_DDL = re.compile(
+    r"\bSHOW\s+CREATE\s+\w+",
+    re.IGNORECASE,
+)
+
+# Prisma가 스스로 DDL을 만들어 적용하는 정규 경로. 여기 걸리면 통과시킨다.
+PRISMA_SANCTIONED = re.compile(
+    r"prisma\b.*?migrate\s+(?:dev|diff|deploy|resolve|status)"
+    r"|\bdb:migrate\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+DDL_HOWTO = (
+    "[db-guardrail] 차단: DB에 스키마 DDL을 직접 실행하려 합니다.\n"
+    "추가성(CREATE TABLE)이어도 막습니다 — 이력이 _prisma_migrations 에 남지 않아\n"
+    "공유 dev DB가 drift 상태가 되고, 다음 사람의 migrate dev 가 리셋을 제안합니다.\n"
+    "(2026-08-13 detailer_post 3개 테이블에서 실제로 발생)\n"
+    "\n"
+    "정규 경로:\n"
+    "  1) apps/api/prisma/schema.prisma 를 고친다\n"
+    "  2) cd apps/api && pnpm db:migrate   ← Prisma가 폴더+SQL을 만들고 dev에 적용\n"
+    "  3) 생성된 migrations 폴더를 커밋한다\n"
+    "  4) prod 는 그 SQL 을 사람이 수동 실행한다\n"
+    "\n"
+    "스키마가 dev에 없어 E2E가 막히면 DDL을 직접 치지 말고 2)를 요청하세요.\n"
+    "읽기(SHOW CREATE TABLE / SELECT)는 막지 않습니다."
 )
 
 
@@ -134,6 +200,16 @@ def main():
             "[db-guardrail] 차단: SSH 원격 mysql DROP / TRUNCATE 가 감지됐습니다. "
             "직접 터미널에서 실행하세요."
         )
+
+    # ── 검사 4: DB 실행 컨텍스트 + 스키마 DDL ───────────────────────────────
+    # 추가성 DDL도 막는다. 마이그레이션 이력을 남기는 경로는 prisma migrate 뿐이다.
+    ddl_target = READ_ONLY_DDL.sub(" ", raw_cmd)
+    if (
+        SCHEMA_DDL.search(ddl_target)
+        and (DB_EXEC.search(raw_cmd) or SSH_MYSQL.search(raw_cmd))
+        and not PRISMA_SANCTIONED.search(raw_cmd)
+    ):
+        deny(DDL_HOWTO)
 
     allow()
 
