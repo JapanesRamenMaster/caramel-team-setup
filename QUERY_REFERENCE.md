@@ -344,6 +344,7 @@ WHERE r.id=?;
 - ⚠️ **`status='현직'`만 걸면 파견 셀장이 조용히 빠진다** (2026-08-14 실측: 셀장 현직 6 + **파견 2** = 8, 8명 모두 §3a 활성 65명 안에 있다). 코드 선례(`prisma-auth.repository.ts`·`prisma-admin-wow-flow.repository.ts`)는 전부 현직만 잡는다 — 그게 맞는 건 "지금 그 존을 맡은 셀장" 판정일 때뿐이다. **공지·알림처럼 "셀장 전원에게 도달"이 목적이면 `status IN ('현직','파견')`**. 목적을 안 정하고 선례를 복사하면 2명이 영구 누락된다.
 - ⚠️ **한 셀이 여러 zone(region)에 걸친다.** cell_name ≠ region/zone. 예: 이승원 셀 = Z1·Z6·Z17 3개 zone에 멤버 분산. 셀장 본인 `region`(Z1)은 셀장이 일하는 zone 하나일 뿐 셀 커버리지가 아님.
 - 셀원 명단: `WHERE cell_name='<셀장>' AND status='현직'` — zone/region으로 셀을 재구성하려 하면 누락(타 zone 셀원)+혼입(같은 zone 타 셀원)이 동시에 발생.
+- ⚠️ **`position` 화이트리스트로 셀 구성원을 뽑지 말 것.** 실측 값 분포(2026-08-17)는 `셀원` 60 · `''`(빈문자) 50 · `교육생` 21 · NULL 9 · `셀장` 8 · `팀장` 1 이라, 흔히 쓰는 `position IN ('셀장','셀원')`은 **교육생·팀장을 조용히 배제한다**(교육생은 장태훈·이순행 셀에 실재). "그 셀장의 사람 전원"이 목적이면 **같은 `cell_name`만** 걸어라. 빈문자·NULL row는 `cell_name`이 없어 어차피 안 붙는다.
 - 파견 셀(오토랩·헤이딜러·인천테슬라 등)은 region이 Z코드가 아닌 텍스트.
 
 두 테이블 JOIN 시 `COLLATE utf8mb4_general_ci` 필수.
@@ -786,6 +787,38 @@ WHERE us.user_id = ? AND us.deleted_yn = 0
 ```
 전체 규모(2026-07-31, 살아있고 미만료인 `user_service` 기준): 미사용 18,860 / 미래 CONFIRMED 선점 4,816 / 소진(WASHED) 35,248. **선점분이 실질 보유의 4,816÷23,676 = 20.3%** — 무시하면 CS 답변이 대량으로 틀린다.
 
+### 5c-2. 🔴 세차 1건이 "무엇으로 결제됐나"(세그먼트) 판정 — `paid_yn`으로는 못 가른다 (2026-08-18 실측)
+
+"이 달 세차를 구독/1회권/제휴/무료로 쪼개라"는 요청의 정본 축은 **예약에 물린 `user_service` 1행**이다(`us.reservation_id = r.id AND us.deleted_yn = 0`). 판정 순서:
+
+1. `us.subscription_id IS NOT NULL` → **구독**. 종류는 `subscription.product_id → product.name`(실값 `월 2회(외부만)`·`월 4회(외부만)`·`월 1회` …). ⚠️ 이름이 제각각인 **커스텀·레거시 구독이 상시 존재**(2026-07 세차 2,077건 중 41건, 17종) → 화이트리스트 3종으로만 매칭하면 조용히 샌다.
+2. `us.coupon_campaign_reward_id` → 제휴/캠페인. **회권 크기는 캠페인명으로만** 갈린다(현백 73=1회권/74=3회권/75=5회권).
+3. `us.payment_id IS NOT NULL` → 유료. **회권 크기 = 그 payment로 발급된 티켓 수**: `SELECT payment_id, COUNT(*) FROM user_service WHERE deleted_yn=0 GROUP BY payment_id` — ⚠️ **`payment.quantity`가 아니다**(NULL 다수). 1이면 1회권 단품, 5/10/12면 회권 소진.
+4. 나머지 = **어드민 수동지급**(아래 함정).
+
+🔴 **`paid_yn`은 유·무료 판별에 못 쓴다 — 무료 지급분도 전부 `paid_yn=1`이다.** §5c의 "유료 예약 = `paid_yn=1`"은 프로모션 0원 payment를 거르는 용도이지, payment 자체가 없는 지급분은 걸러내지 못한다.
+
+🔴 **비구독 세차의 41%(2026-07: 498/1,202)는 `payment_id`가 NULL이다.** 리터치·제휴 무료·어드민 지급·현장수금이 전부 여기 섞여 있고, `paid_amount`도 NULL이라 금액이 없다. 명분·금액 정본은 **`crm_note.memo`**(`결제받을 금액: N원` = 현장수금 1회권 / `수금할 금액` = 반얀 등 제휴 회권 / §6c 참조)뿐인데, **메모가 아예 없는 건이 213/3,278 = 6.5%**다 → 이 구간은 **DB만으로 유·무료 판정 불가**. 보조 축은 `reservation.booked_online_yn`(0=어드민 대행예약)뿐이고, **`log` 테이블로는 추적 안 된다**(user_service는 `used_yn` 변경만 기록되고 지급 INSERT 로그가 없다).
+
+⚠️ **예약 1건에 살아있는 `user_service`가 2행 붙는 경우가 있다**(2026-07: 3,278예약 → 3,279행, 구독 티켓 + 수동지급 티켓 중복). 세그먼트 집계는 `COUNT(DISTINCT r.id)`나 예약당 1행 dedupe(구독 우선)를 써야 총합이 예약 수와 맞는다.
+
+무료 명분은 대부분 **`service.name` 접두사**로 갈린다: `[리터치]`(재세차·AS)·`[AS]`·`[토스]`·`[프로모션]`·`[B2B]`·`[체험단]`·`올클린 케어 for 반얀트리`. 제휴 무료는 캠페인명(`[레슨북]`·`쟈스민` 등)으로.
+
+🔴 **단, 세차권 *이름*으로 제휴처를 세면 틀린다 — 제휴처 여러 곳이 한 `service.id`를 공유한다 (2026-08-18 실측).** `service 137 프리미엄 세차 패키지 올클린 케어` 1,556장은 **현대백화점(campaign 73·74·75) / 반얀트리 760 / 캐딜락·GMC(camp 90) / 레슨북 / 테스트**가 전부 같은 이름으로 섞여 있다. **`service_id`·`service.name`엔 판매처 정보가 없다** — 정본은 아래 `package_key`. 위 접두사 규칙은 무료 *명분*엔 통해도 제휴처 *귀속*엔 안 통한다.
+
+🔴 **패키지 세차권의 판매처 정본은 `entitlement_package_instance.package_key`다 — `user_service`의 귀속 컬럼 3개를 보면 안 된다 (2026-08-18 실측).** service 137의 **760장(49%)** 은 `coupon_campaign_reward_id`·`coupon_code_reward_id`·`payment_id`가 **전부 NULL**이라 `user_service`만 보면 "출처 불명"으로 보이는데, 실제로는 `package_key='BANYAN_WASH_PACKAGE_10'`(700장)·`'BANYAN_WASH_PACKAGE_5'`(60장)·`source_type='ADMIN_GRANT'`로 명시 기록돼 있다. 조인 경로:
+```sql
+JOIN entitlement_package_item epit ON epit.user_service_id = us.id
+JOIN entitlement_package_instance epi ON epi.id = epit.package_instance_id
+-- epi.package_key: 'BANYAN_WASH_PACKAGE_10' | 'campaign:75:group:1' | 'PREMIUM_WASH_PACKAGE_5' ...
+-- epi.source_type: 'ADMIN_GRANT' | 'COUPON_CODE'
+```
+커버리지 실측 = service 137의 **1,556장 중 1,553장(99.8%)**. 캠페인 발급분은 `package_key='campaign:{campaignId}:group:{n}'` 형태라 캠페인 id까지 이 컬럼 하나로 나온다(73·74·75=현백 1·3·5회권, 90=캐딜락/GMC).
+
+⚠️ **"세차권을 어디서 받았나"와 "고객이 반얀 고객인가"를 섞지 말 것.** 전자의 정본은 위 `package_key`이고, 후자를 굳이 유저 단위로 봐야 하면 `app_user.utm_source IN ('반얀트리','banyantree','반얀트리_정기세차')` + `app_user.note LIKE '%반얀%'`이다 — 단 **`utm_source`는 가입 유입경로라 판매처가 아니다**(반얀 지급자 중 `direct`·`lms`·`naver.searchad`·NULL이 9명 실재). **주소(`장충단로 60`)로 세는 것도 금지** — 테스트 계정 11명이 그 주소로 등록돼 있어 섞이고, 실거주지가 성산동·역삼동인 실제 반얀 고객은 빠진다. (⚠️ *예약* 주소 매칭은 또 별개 — `location REGEXP '장충단로 ?60($|[^0-9길])'`, §3d.)
+
+"첫 세차 vs n번째"는 유저별 선행 `WASHED`/`REPORT_SENT` 카운트로 — 하한 없이(§4b-1).
+
 ### 5d. 구독 status=ACTIVE 필터
 
 - `status='ACTIVE'` 단독 조건은 일시정지 포함 → "현재 세차 가능한 활성 구독자" 집계 시 왜곡
@@ -968,6 +1001,7 @@ first_sub_reservations AS (
 - 🔴 **디테일러 근속·입사일 정본 = `detailer_supply_sheet.hire_date`. `detailer.created_at`을 쓰면 틀린다 (2026-08-14 실측).** `detailer`엔 입사일 컬럼이 아예 없고 `created_at`은 행 생성일이다 — 최솟값이 2024-12-17(테이블 이관 흔적)이라 실제보다 근속이 짧게 나온다(김희헌80: row 2025-02-13인데 첫 WASHED 2024-05-06 = 9개월 손실). **`schema.prisma`에 없는 GAS 동기화 테이블이라 Prisma만 보면 "입사일 데이터가 없다"고 오판하기 쉽다**(실제로 그렇게 오판했다). `hire_date`는 `batch`·첫 세차와 정합(이승원21 12-18 입사 → 12-27 첫 세차). ⚠️ 활성 65명 중 1명 미매칭 + 김희헌 1건 어긋남 → **`created_at` 폴백 금지, 예외는 수동 확인.** 참고 분포(2026-08-14, §3a 65명): 근속 1년+ 19명 · **2년+ 0명 · 3년+ 0명** — 결함이 아니라 직영 조직이 2024-12(1기) 시작이라 사실이다.
 - 현직 판별: `detailer_supply_sheet.status='현직'`이 정본(퇴사/하차/삭제/교육중 제외). ⚠️ `detailer.retired_yn`은 미신뢰 — 실제 퇴사자도 0인 경우 있음(주진우147, retired_yn=0인데 booking_yn=0·supply_sheet 퇴사). `booking_yn=0`이 실질 비활성 시그널. supply_sheet 조인=phone `REPLACE(phone,'-','') COLLATE utf8mb4_general_ci`, `status IS NULL`=로스터 누락(퇴사 아님, 확인 필요).
 - ⚠️ **반얀 파견 예외**: 반얀 파견 디테일러(`detailer_work_schedule.type LIKE 'BANYAN%'`, 예 `BANYAN_TREE_EXTENDED`)는 정상근무 차단용 **종일 휴무**가 걸려도 그날 배정된 **반얀 예약(장충단로 60)은 본인 담당** → 휴무충돌 감사·재배정 대상에서 제외(2026-07-24 이형준161 사례).
+- 🔴 **존별 인당 부하(per_head)를 낼 땐 파견조를 분모에서 빼라 — 안 그러면 여유가 있는 것처럼 보인다 (2026-08-17 실측).** 반얀 파견조는 GPS상 Z9(장충동)에 찍히지만 장충단로 60 상주라 **그 존의 일반 예약을 받을 수 없다.** 8/18 Z9를 통으로 세면 37건/11명 = 3.4로 가장 여유로워 보이는데, 파견 12건/5명을 분리하면 일반은 **25건/6명 = 4.2**로 상위권이다. ⟹ 부하 랭킹·재배정 후보 탐색은 `type LIKE 'BANYAN_TREE%'`를 **별도 집계**로 뺀 뒤 볼 것. 같은 논리가 종일휴무자에도 적용된다 — "그날 예약 0건"은 여유 인력이 아니라 대개 연차다(§휴무 윈도우로 반드시 교차확인).
 - ⚠️ **반얀 예약 매칭은 `LIKE '%장충단로 60%'` 금지** — '장충단로 600'·'장충단로 60길'을 오탐한다. **`location REGEXP '장충단로 ?60($|[^0-9길])'`** 를 쓸 것(공백 없는 '장충단로60'까지 커버, caramel-zero `isBanyanAddress` 정규식과 같은 기준). ⚠️ 파이썬 `mysql.connector`로 실행할 때 `%`가 들어가면 이스케이프 함정이 있으니 REGEXP가 안전하다.
 - 🔴 **셔플은 2026-07-30부터 17시가 아니라 KST 14시다** (caramel-api PR #515, main `634d562`, prod 반영). 아래 항목들과 §재배정 역추적의 "17시" 서술은 그 이전 기준이니 **`modified_at` 지문은 `HOUR=14 AND MINUTE=0`**으로 볼 것. 그리고 **2026-08-06부터 파견조(`type LIKE 'BANYAN_TREE%'`)는 셔플 대상에서 완전 제외**됐다(#525/#526, main `c3194e2e`) — 아래 "파견조에 새 위반이 계속 생긴다"는 서술은 그 이전 상태다(§3d 참조).
 - ⚠️ **"이 예약이 셔플(당시 17시, 현재 14시 동선 재배정) 대상인가"는 DB 컬럼만으로 판정할 수 없다 (2026-07-26 확정).** `reservation.allow_shuffle_yn`(DEFAULT 1)은 *옮겨지는 예약* 쪽만 막는다 — 코드의 move 로직은 **받는 디테일러를 보지 않는다**(swap은 양쪽 예약을 본다). 즉 `allow_shuffle_yn=0`으로도 "그 디테일러에게 다른 예약이 들어오는 것"은 못 막는다(실사례: 2026-07-24 셔플이 을지로 예약 81101을 반얀 파견조 정순욱187에 배정). 반대로 반얀 예약은 **주소 문자열 게이트**(`user_address`의 address+building_name+jibun_address에 '반얀트리'/'장충단로 60'/'장충동2가 201' 포함 여부)로 이미 이동이 막혀 있어 `allow_shuffle_yn=1`이어도 안 옮겨진다. → 셔플 영향 판정은 반드시 코드 게이트(`libs/route-optimization`)를 함께 확인.
@@ -1472,6 +1506,9 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 - `key='admin/walk-in'` = 현장접수(워크인), `key='admin/call'` = 콜콘솔 컨시어지, 둘 다 없으면 고객앱. **워크인만 세면 콜콘솔분이 통째로 빠진다.**
 - 워크인 value JSON에 **`intakeChannel`**(`FIELD_SALES`/발렛/직접방문) + **`fieldSalesDetailerId`·`fieldSalesDetailerName`** = 현장영업 실제 영업자. 접수 계정(`sales.partnerId`)은 반얀 공용 `오퍼레이터`라 영업자 특정에 못 쓴다 — **"누가 팔았나"는 이 필드가 정본**.
 - `key='banyan/strategy'` = 셀장이 쓴 판매 작전 텍스트(`{text, authorName, updatedAt}`).
+  - 🔴 **수정 여부를 `modified_at`으로 판정하지 말 것 — 이 테이블은 갱신해도 `modified_at`이 안 변한다** (2026-08-17 실측: 43행 전부 `modified_at = created_at`). Prisma 모델에 `@updatedAt`이 없고 컬럼에도 `ON UPDATE`가 없다. 게다가 `(reservation_id, key)` unique 인덱스가 없어 저장 로직이 `findFirst`→`update`로 **같은 행을 덮어쓰므로 행 수도 안 늘어난다** → "아무도 수정 안 했다"로 오독한다.
+  - **수정 판정 정본 = value JSON `updatedAt` vs `created_at` 비교**: `STR_TO_DATE(REPLACE(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(value,'$.updatedAt')),'T',' '),'Z',''),'%Y-%m-%d %H:%i:%s.%f')`. 실측 43행 중 4행이 최대 **+972분** 뒤 수정돼 있었다(둘 다 UTC).
+  - ⚠️ **`authorName`은 작성자가 아니다** — 보드 "내 카드만" 필터로 고른 **담당 디테일러 이름**이다(반얀은 공용 계정이라 세션으로 작성자를 못 가른다). 작성자별 집계에 쓰면 틀린다. 슬랙 게시에서도 이 이유로 작성자 줄을 뺐다.
 
 ---
 
@@ -1533,6 +1570,8 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | tier | int | 티어 |
 | slack_member_id | varchar(100) | 슬랙 멤버 ID |
 
+🔴 **플래그는 전부 tinyint다 — `booking_yn='Y'`로 쓰면 에러 없이 정반대 집합이 나온다** (2026-08-17 실측). MySQL이 `'Y'`를 0으로 캐스팅하므로 `booking_yn='Y'`는 **퇴사·비활성 96명**을 고르고 활성 67명을 통째로 버린다. 경고도 빈 결과도 없이 그럴듯한 숫자가 나오는 게 함정 — 실제로 이걸로 "활성 디테일러 중 5명만 근무스케줄 보유"라는 엉뚱한 결론이 한 번 나왔다. `retired_yn`·`deleted_yn`·`direct_yn`·`admin_yn`도 같다. **반드시 `= 1` / `= 0`.**
+
 🔴 **Active 디테일러 필터는 §3a를 쓴다** — `booking_yn=1 AND retired_yn=0 AND deleted_yn=0 AND direct_yn=1`(65명).
 ~~`d.deleted_yn=0 AND d.retired_yn=0 AND d.admin_yn=0`~~ 은 **틀렸다**(2026-08-10 폐기). `retired_yn`만 걸면 129명이 나오는데 supply_sheet 조인 결과 그중 **퇴사 38·하차 8명이 섞여 있다**(retired_yn이 0으로 남아 있음). §3a 4조건은 그 46명을 **100% 배제**한다(0/38·0/8).
 - **"앱을 쓰는 사람" 기준도 §3a를 쓴다.** `booking_yn`이 예약 배정용이라 앱 권한과 무관해 보여 `retired_yn`으로 갈아타고 싶어지지만, 실데이터에선 그게 분모를 2배 부풀린다. `direct_yn=0`은 로스터 누락 1명뿐이라 빼도 무해하다(실측).
@@ -1540,6 +1579,24 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 - 층별 인원·재현 절차는 §3a 표 참조.
 
 ⚠️ **이름으로 디테일러 찾을 땐 `detailer.name`으로 검색** — `JOIN app_user ON user_id` 후 `app_user.name`으로 찾으면 일부 디테일러가 누락된다 (실사례 2026-07-16: 염철림(165)은 app_user.name으로 안 잡히고 detailer.name에만 있음).
+
+---
+
+### partner (어드민·현장 계정) — 🔴 "어드민 기능이 갑자기 안 된다"의 1순위 조회 대상 (2026-08-17 실측)
+컬럼: `id·name·username·password·role·phone_number·user_id·detailer_id·deleted_yn·created_at`.
+
+- **`role`이 API 권한을 결정한다.** zero-api가 로그인 시 role → capability를 JWT에 박고(`partner-capability-resolver.ts`), `admin-partner-jwt.guard.ts`가 **capability별 라우트 allowlist**로 검사한다.
+
+| `partner.role` | capability | 접근 범위 |
+|---|---|---|
+| `ADMIN` | `FULL_ADMIN` | **전 `/v1/admin/*` 통과**(검사 없음) |
+| `MASTER_DETAILER` | `DETAILER_CONCIERGE`+`ASSISTED_BOOKING` | allowlist에 **명시된 경로만** |
+| `REPAIR` | 위와 동일 | 동일 |
+| `DETAILER` | `ASSISTED_BOOKING` | 예약 잡기 계열만 (**반얀 보드 접근 불가**) |
+
+- 🔴 **2026-08-17, 공용 계정(`operator` = partner 41, `detailer1`·`detailer2`)이 전부 `deleted_yn=1`로 정지되고 현장 인원이 개인 `MASTER_DETAILER` 계정으로 전환됐다**(username = 본인 휴대폰번호). ⟹ **allowlist에 없는 엔드포인트가 그 순간부터 전부 403**이 된다. 현장에서 "저장이 안 된다"고 오면 코드·배포보다 **먼저 `partner.role`을 조회**할 것(실사례: 반얀 판매 작전 저장 403, PR #1606).
+- ⚠️ **권한 변경은 재로그인해야 적용된다** — capability가 JWT 발급 시점에 박히므로 `role`만 UPDATE하면 기존 토큰은 그대로다.
+- 옛 서술 정정: "반얀 현장은 공용 오퍼레이터 계정이라 개인 특정 불가"는 **2026-08-17부터 성립하지 않는다** — `crm_note.partner_id`·`partner_activity_log.partner_id`로 개인이 특정된다.
 
 ---
 
@@ -1585,7 +1642,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
   - **레거시** `POST /users-admin/{userId}/rewards` (sales-admin `사용권 지급` 드로어) → **운영자가 만료일을 직접 고른다. 화면 기본값이 `dayjs().add(1,'month')`** (`GrantRewardDrawer.tsx:38`)라 대부분 +30/31일로 찍힌다.
   - **레거시 경로 지문**: `partner_activity_log_id` NOT NULL + `product_id` NULL + `paid_amount` NULL.
     `partner_activity_log`(`action='SERVICE_ISSUED'`) 조인 → `description`에 **운영자가 쓴 메모**, `partner_id`에 지급자가 남는다. 발급 출처를 물으면 이 조인이 1순위다.
-  - **세 번째 경로 = 패키지 grant**(zero `grantAdminBanyanEntitlementPackage`, 반얀 5·10회권) → 만료 **정확히 1년**(`calculateIssuedUserServiceEndedAt`, 파일 로컬 3년 상수와 다름). 지문 = `service_id=137` + `product_id` NULL + `paid_amount=0` + **`partner_activity_log_id` NULL**. 🔴 **이 경로는 `partner_activity_log`에 아무것도 안 남긴다** — 지급 주체를 물으면 `crm_note`(수금 문구)의 `partner_id`가 유일한 단서다. 반얀 현장은 공용 `오퍼레이터`(partner 41) 계정이라 개인 특정은 불가하고, 실제 영업자는 예약 쪽 `reservation_metadata`로 가야 나온다(바로 아래 §reservation).
+  - **세 번째 경로 = 패키지 grant**(zero `grantAdminBanyanEntitlementPackage`, 반얀 5·10회권) → 만료 **정확히 1년**(`calculateIssuedUserServiceEndedAt`, 파일 로컬 3년 상수와 다름). 지문 = `service_id=137` + `product_id` NULL + `paid_amount=0` + **`partner_activity_log_id` NULL**. 🔴 **이 경로는 `partner_activity_log`에 아무것도 안 남긴다** — 지급 주체를 물으면 `crm_note`(수금 문구)의 `partner_id`가 유일한 단서다. 반얀 현장은 **2026-08-16까지는** 공용 `오퍼레이터`(partner 41) 계정이라 개인 특정이 불가했고, 실제 영업자는 예약 쪽 `reservation_metadata`로 가야 나왔다(바로 아래 §reservation). **2026-08-17부터 개인 계정으로 전환돼 `partner_id`로 특정된다** — §partner 참조. 기간 경계를 무시하고 한쪽 규칙만 쓰면 절반이 틀린다.
   - ⚠️ **만료기간으로 발급 경로를 가르지 말 것** — "30일권"은 별도 경로가 아니라 화면 기본값이다. 코드 상수인지 UI 기본값인지 확인 없이 나누면 한 경로를 둘로 센다.
   - ⚠️ 드로어의 service 드롭다운은 `comment !== 'DEPRECATED'`만 필터한다(`:28`) → **내부용 service도 CS 지급 화면에 그대로 노출된다.**
 - 🔴 **유효기간 일괄 연장 시 `ended_at < 목표일` 가드 필수** — 조건 없이 UPDATE하면 2999/2099/9999 행이 함께 걸려 **연장이 아니라 단축**이 된다.
