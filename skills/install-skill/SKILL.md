@@ -25,8 +25,10 @@ tags:
 ## 실행 절차
 
 1. 스킬 이름이 주어지면 바로 설치. 없으면 목록 표시.
-2. `~/.caramel-team-setup/skills/<name>/SKILL.md` 존재 여부 확인.
-3. 있으면: `~/.claude/skills/<name>/SKILL.md`로 복사 (디렉토리 없으면 생성).
+2. `~/.caramel-team-setup/skills/<name>/` 존재 여부 확인.
+3. 있으면: **디렉토리를 통째로** `~/.claude/skills/<name>/`로 복사.
+   SKILL.md만 복사하면 옆에 있는 실행 스크립트(`lms-send.js`,
+   `grant-wash-voucher.js`, `caramel-admin-api.sh`)가 안 따라와 스킬이 깨진다.
 4. 완료 메시지 출력.
 
 ## 예시 명령어
@@ -35,12 +37,29 @@ tags:
 # 목록 확인
 ls ~/.caramel-team-setup/skills/
 
-# 단일 스킬 설치
-mkdir -p ~/.claude/skills/zone-change
-cp ~/.caramel-team-setup/skills/zone-change/SKILL.md ~/.claude/skills/zone-change/SKILL.md
-echo "✅ zone-change 설치 완료"
+# 단일 스킬 설치 (SKILL 이름만 바꿔서)
+NAME=zone-change
+if [ -L ~/.claude/skills/$NAME ]; then
+  echo "이미 심링크로 설치됨 (팀 셋업 사용 중) — 그대로 두면 자동 최신화됨"
+else
+  rm -rf ~/.claude/skills/$NAME
+  cp -R ~/.caramel-team-setup/skills/$NAME ~/.claude/skills/$NAME
+  echo "$NAME 설치 완료"
+fi
 
-# 전체 팀 스킬 동기화 (주의: 로컬 수정 덮어씀)
-cp -r ~/.caramel-team-setup/skills/. ~/.claude/skills/
-echo "✅ 전체 팀 스킬 동기화 완료"
+# 최신화는 레포만 당기면 됨
+git -C ~/.caramel-team-setup pull --ff-only
 ```
+
+## 팀 셋업(setup.sh)을 안 돌린 사람도 이걸로 충분하다
+
+`setup.sh`는 `~/.claude/settings.json`의 `SessionStart` 훅을 **대입으로 덮어쓴다**
+(기존 훅이 있으면 사라진다). 자기 클로드 세팅이 있는 개발자는 `setup.sh`를 돌리지 말고
+레포만 클론한 뒤 이 스킬로 필요한 스킬만 가져가면 된다.
+
+```bash
+git clone https://github.com/JapanesRamenMaster/caramel-team-setup ~/.caramel-team-setup
+```
+
+DB 조회가 필요한 스킬은 `~/.caramel-team-setup/mysql-query.sh`를 쓰는데,
+같은 디렉토리에 `.env`가 있어야 한다(별도 전달).
