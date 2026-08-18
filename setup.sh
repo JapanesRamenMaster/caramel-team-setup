@@ -361,90 +361,23 @@ for skill_dir in "$INSTALL_DIR/skills"/*/; do
 done
 echo "스킬 설치 완료 (심링크):$INSTALLED_SKILLS"
 
-# 8-1. Claude Code 세션 훅 등록 (자동 업데이트)
-SETTINGS_FILE="$HOME/.claude/settings.json"
+# 8-1/8-2. Claude Code 세션 훅 등록 (글로벌 + 프로젝트)
+# 대입이 아니라 추가. 기존 SessionStart 훅(superpowers·gstack 등)을 죽이지 않는다.
 HOOK_CMD="$HOME/.caramel-team-setup/update.sh 2>/dev/null || true"
+ENSURE_HOOK="$INSTALL_DIR/hooks/ensure-session-hook.py"
 
-# 최신 Claude Code hooks 형식: hooks 배열 중첩
-HOOK_JSON='[{"hooks":[{"type":"command","command":"'"$HOOK_CMD"'"}]}]'
-
-if [ -f "$SETTINGS_FILE" ]; then
-    if command -v jq &> /dev/null; then
-        if ! grep -q "caramel-team-setup/update.sh" "$SETTINGS_FILE" 2>/dev/null; then
-            jq --argjson hooks "$HOOK_JSON" '.hooks.SessionStart = $hooks' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-            echo "Claude Code 세션 훅 등록 완료 (자동 업데이트)"
-        else
-            echo "Claude Code 세션 훅 이미 등록됨"
-        fi
-    elif command -v python3 &> /dev/null; then
-        if ! grep -q "caramel-team-setup/update.sh" "$SETTINGS_FILE" 2>/dev/null; then
-            python3 -c "
-import json
-with open('$SETTINGS_FILE', 'r') as f:
-    data = json.load(f)
-if 'hooks' not in data:
-    data['hooks'] = {}
-data['hooks']['SessionStart'] = [{'hooks': [{'type': 'command', 'command': '$HOOK_CMD'}]}]
-with open('$SETTINGS_FILE', 'w') as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
-" 2>/dev/null && echo "Claude Code 세션 훅 등록 완료 (python3)" || echo "WARNING: 세션 훅 등록 실패"
-        else
-            echo "Claude Code 세션 훅 이미 등록됨"
-        fi
-    else
-        echo "WARNING: jq/python3 없어서 세션 훅을 자동 등록할 수 없습니다."
-    fi
-else
-    mkdir -p "$HOME/.claude"
-    cat > "$SETTINGS_FILE" << HOOKEOF
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      }
-    ]
-  }
-}
-HOOKEOF
-    echo "Claude Code 세션 훅 등록 완료 (자동 업데이트)"
-fi
-
-# 8-2. 프로젝트 레벨 훅 등록 (글로벌 훅 덮어쓰기 방지용 이중 안전장치)
 PROJECT_SETTINGS_DIR="$WORK_DIR/.claude"
-PROJECT_SETTINGS_FILE="$PROJECT_SETTINGS_DIR/settings.json"
 mkdir -p "$PROJECT_SETTINGS_DIR"
 
-if [ -f "$PROJECT_SETTINGS_FILE" ]; then
-    if command -v jq &> /dev/null; then
-        if ! grep -q "caramel-team-setup/update.sh" "$PROJECT_SETTINGS_FILE" 2>/dev/null; then
-            jq --argjson hooks "$HOOK_JSON" '.hooks.SessionStart = $hooks' "$PROJECT_SETTINGS_FILE" > "${PROJECT_SETTINGS_FILE}.tmp" && mv "${PROJECT_SETTINGS_FILE}.tmp" "$PROJECT_SETTINGS_FILE"
-        fi
-    fi
+if command -v python3 &> /dev/null; then
+    python3 "$ENSURE_HOOK" "$HOME/.claude/settings.json" "$HOOK_CMD"
+    python3 "$ENSURE_HOOK" "$PROJECT_SETTINGS_DIR/settings.json" "$HOOK_CMD"
+    echo "세션 훅 등록 완료 (글로벌 + 프로젝트)"
 else
-    cat > "$PROJECT_SETTINGS_FILE" << PROJHOOKEOF
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      }
-    ]
-  }
-}
-PROJHOOKEOF
+    echo "WARNING: python3 없어서 세션 훅을 자동 등록할 수 없습니다."
+    echo "  수동: ~/.claude/settings.json 의 hooks.SessionStart 에 아래를 '추가'하세요(덮어쓰지 말 것)"
+    echo "  $HOOK_CMD"
 fi
-echo "프로젝트 레벨 세션 훅 등록 완료"
 
 # 8-3. dev 역할이면 PreToolUse 가드레일 훅 등록 (보호 브랜치 push·prod 머지·DB 파괴 차단)
 ROLE_LC="$(printf '%s' "$ROLE" | tr '[:upper:]' '[:lower:]')"

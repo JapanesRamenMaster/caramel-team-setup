@@ -108,42 +108,8 @@ HOOK_CMD="$HOME/.caramel-team-setup/update.sh 2>/dev/null || true"
 ensure_hook() {
   local target_file="$1"
   [ -f "$target_file" ] || return 0
-
-  # 이미 등록되어 있으면 스킵 (grep으로 확인 — jq 없어도 동작)
-  if grep -q "caramel-team-setup/update.sh" "$target_file" 2>/dev/null; then
-    return 0
-  fi
-
-  if command -v jq &>/dev/null; then
-    # jq 있으면 정확한 JSON 조작
-    if jq -e '.hooks.SessionStart' "$target_file" &>/dev/null 2>&1; then
-      jq --arg cmd "$HOOK_CMD" \
-        '.hooks.SessionStart += [{"type": "command", "command": $cmd}]' \
-        "$target_file" > "${target_file}.tmp" && mv "${target_file}.tmp" "$target_file"
-    else
-      jq --arg cmd "$HOOK_CMD" \
-        '.hooks.SessionStart = [{"type": "command", "command": $cmd}]' \
-        "$target_file" > "${target_file}.tmp" && mv "${target_file}.tmp" "$target_file"
-    fi
-  elif command -v python3 &>/dev/null; then
-    # jq 없으면 python3 fallback
-    python3 -c "
-import json, sys
-with open('$target_file', 'r') as f:
-    data = json.load(f)
-hook = {'type': 'command', 'command': '$HOOK_CMD'}
-if 'hooks' not in data:
-    data['hooks'] = {}
-if 'SessionStart' not in data['hooks']:
-    data['hooks']['SessionStart'] = []
-data['hooks']['SessionStart'].append(hook)
-with open('$target_file', 'w') as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
-" 2>/dev/null
-  else
-    return 0
-  fi
-  echo "caramel-team-setup: SessionStart 훅 복구됨 ($(basename $(dirname "$target_file")))"
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 "$INSTALL_DIR/hooks/ensure-session-hook.py" "$target_file" "$HOOK_CMD"
 }
 
 # 안전 액션 레이어 훅 보강: gate.sh(SessionStart) + enforce.py(PreToolUse)
