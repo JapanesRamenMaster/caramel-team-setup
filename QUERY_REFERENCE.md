@@ -787,6 +787,38 @@ WHERE us.user_id = ? AND us.deleted_yn = 0
 ```
 전체 규모(2026-07-31, 살아있고 미만료인 `user_service` 기준): 미사용 18,860 / 미래 CONFIRMED 선점 4,816 / 소진(WASHED) 35,248. **선점분이 실질 보유의 4,816÷23,676 = 20.3%** — 무시하면 CS 답변이 대량으로 틀린다.
 
+### 5c-2. 🔴 세차 1건이 "무엇으로 결제됐나"(세그먼트) 판정 — `paid_yn`으로는 못 가른다 (2026-08-18 실측)
+
+"이 달 세차를 구독/1회권/제휴/무료로 쪼개라"는 요청의 정본 축은 **예약에 물린 `user_service` 1행**이다(`us.reservation_id = r.id AND us.deleted_yn = 0`). 판정 순서:
+
+1. `us.subscription_id IS NOT NULL` → **구독**. 종류는 `subscription.product_id → product.name`(실값 `월 2회(외부만)`·`월 4회(외부만)`·`월 1회` …). ⚠️ 이름이 제각각인 **커스텀·레거시 구독이 상시 존재**(2026-07 세차 2,077건 중 41건, 17종) → 화이트리스트 3종으로만 매칭하면 조용히 샌다.
+2. `us.coupon_campaign_reward_id` → 제휴/캠페인. **회권 크기는 캠페인명으로만** 갈린다(현백 73=1회권/74=3회권/75=5회권).
+3. `us.payment_id IS NOT NULL` → 유료. **회권 크기 = 그 payment로 발급된 티켓 수**: `SELECT payment_id, COUNT(*) FROM user_service WHERE deleted_yn=0 GROUP BY payment_id` — ⚠️ **`payment.quantity`가 아니다**(NULL 다수). 1이면 1회권 단품, 5/10/12면 회권 소진.
+4. 나머지 = **어드민 수동지급**(아래 함정).
+
+🔴 **`paid_yn`은 유·무료 판별에 못 쓴다 — 무료 지급분도 전부 `paid_yn=1`이다.** §5c의 "유료 예약 = `paid_yn=1`"은 프로모션 0원 payment를 거르는 용도이지, payment 자체가 없는 지급분은 걸러내지 못한다.
+
+🔴 **비구독 세차의 41%(2026-07: 498/1,202)는 `payment_id`가 NULL이다.** 리터치·제휴 무료·어드민 지급·현장수금이 전부 여기 섞여 있고, `paid_amount`도 NULL이라 금액이 없다. 명분·금액 정본은 **`crm_note.memo`**(`결제받을 금액: N원` = 현장수금 1회권 / `수금할 금액` = 반얀 등 제휴 회권 / §6c 참조)뿐인데, **메모가 아예 없는 건이 213/3,278 = 6.5%**다 → 이 구간은 **DB만으로 유·무료 판정 불가**. 보조 축은 `reservation.booked_online_yn`(0=어드민 대행예약)뿐이고, **`log` 테이블로는 추적 안 된다**(user_service는 `used_yn` 변경만 기록되고 지급 INSERT 로그가 없다).
+
+⚠️ **예약 1건에 살아있는 `user_service`가 2행 붙는 경우가 있다**(2026-07: 3,278예약 → 3,279행, 구독 티켓 + 수동지급 티켓 중복). 세그먼트 집계는 `COUNT(DISTINCT r.id)`나 예약당 1행 dedupe(구독 우선)를 써야 총합이 예약 수와 맞는다.
+
+무료 명분은 대부분 **`service.name` 접두사**로 갈린다: `[리터치]`(재세차·AS)·`[AS]`·`[토스]`·`[프로모션]`·`[B2B]`·`[체험단]`·`올클린 케어 for 반얀트리`. 제휴 무료는 캠페인명(`[레슨북]`·`쟈스민` 등)으로.
+
+🔴 **단, 세차권 *이름*으로 제휴처를 세면 틀린다 — 제휴처 여러 곳이 한 `service.id`를 공유한다 (2026-08-18 실측).** `service 137 프리미엄 세차 패키지 올클린 케어` 1,556장은 **현대백화점(campaign 73·74·75) / 반얀트리 760 / 캐딜락·GMC(camp 90) / 레슨북 / 테스트**가 전부 같은 이름으로 섞여 있다. **`service_id`·`service.name`엔 판매처 정보가 없다** — 정본은 아래 `package_key`. 위 접두사 규칙은 무료 *명분*엔 통해도 제휴처 *귀속*엔 안 통한다.
+
+🔴 **패키지 세차권의 판매처 정본은 `entitlement_package_instance.package_key`다 — `user_service`의 귀속 컬럼 3개를 보면 안 된다 (2026-08-18 실측).** service 137의 **760장(49%)** 은 `coupon_campaign_reward_id`·`coupon_code_reward_id`·`payment_id`가 **전부 NULL**이라 `user_service`만 보면 "출처 불명"으로 보이는데, 실제로는 `package_key='BANYAN_WASH_PACKAGE_10'`(700장)·`'BANYAN_WASH_PACKAGE_5'`(60장)·`source_type='ADMIN_GRANT'`로 명시 기록돼 있다. 조인 경로:
+```sql
+JOIN entitlement_package_item epit ON epit.user_service_id = us.id
+JOIN entitlement_package_instance epi ON epi.id = epit.package_instance_id
+-- epi.package_key: 'BANYAN_WASH_PACKAGE_10' | 'campaign:75:group:1' | 'PREMIUM_WASH_PACKAGE_5' ...
+-- epi.source_type: 'ADMIN_GRANT' | 'COUPON_CODE'
+```
+커버리지 실측 = service 137의 **1,556장 중 1,553장(99.8%)**. 캠페인 발급분은 `package_key='campaign:{campaignId}:group:{n}'` 형태라 캠페인 id까지 이 컬럼 하나로 나온다(73·74·75=현백 1·3·5회권, 90=캐딜락/GMC).
+
+⚠️ **"세차권을 어디서 받았나"와 "고객이 반얀 고객인가"를 섞지 말 것.** 전자의 정본은 위 `package_key`이고, 후자를 굳이 유저 단위로 봐야 하면 `app_user.utm_source IN ('반얀트리','banyantree','반얀트리_정기세차')` + `app_user.note LIKE '%반얀%'`이다 — 단 **`utm_source`는 가입 유입경로라 판매처가 아니다**(반얀 지급자 중 `direct`·`lms`·`naver.searchad`·NULL이 9명 실재). **주소(`장충단로 60`)로 세는 것도 금지** — 테스트 계정 11명이 그 주소로 등록돼 있어 섞이고, 실거주지가 성산동·역삼동인 실제 반얀 고객은 빠진다. (⚠️ *예약* 주소 매칭은 또 별개 — `location REGEXP '장충단로 ?60($|[^0-9길])'`, §3d.)
+
+"첫 세차 vs n번째"는 유저별 선행 `WASHED`/`REPORT_SENT` 카운트로 — 하한 없이(§4b-1).
+
 ### 5d. 구독 status=ACTIVE 필터
 
 - `status='ACTIVE'` 단독 조건은 일시정지 포함 → "현재 세차 가능한 활성 구독자" 집계 시 왜곡
