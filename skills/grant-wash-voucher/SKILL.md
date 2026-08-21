@@ -21,13 +21,13 @@ description: 고객에게 세차권(user_service)을 지급한다. 특히 "티�
 
 - **⚠️ "티어 상관없는 외부만" = serviceId 135**. tier별 가격 세차권(car_tier_product의 15/18/21/24/27/30/33)과 별개다. 상세 [[reference_tier_independent_wash_voucher_service135]].
 - 135 외의 세차권을 지급할 땐 serviceId를 DB로 먼저 확인:
-  `~/.caramel-team-setup/mysql-query.sh "SELECT id,name,wash_type,price FROM service WHERE type='CAR_WASH' AND tier_id IS NULL AND deleted_yn=0 ORDER BY id;"`
+  `~/claude/mysql-query.sh "SELECT id,name,wash_type,price FROM service WHERE type='CAR_WASH' AND tier_id IS NULL AND deleted_yn=0 ORDER BY id;"`
 
 ## 워크플로우
 
 ### 1. 고객 식별 (전화번호 → userId)
 ```bash
-~/.caramel-team-setup/mysql-query.sh "SELECT id, name, phone FROM app_user WHERE phone IN ('010-1234-5678','01012345678') AND deleted_yn=0 AND test_yn=0 AND temp_yn=0;"
+~/claude/mysql-query.sh "SELECT id, name, phone FROM app_user WHERE phone IN ('010-1234-5678','01012345678') AND deleted_yn=0 AND test_yn=0 AND temp_yn=0;"
 ```
 - 하이픈 유/무 둘 다 시도. 이미 userId를 받았으면 생략.
 
@@ -37,7 +37,7 @@ description: 고객에게 세차권(user_service)을 지급한다. 특히 "티�
 
 ### 3. 지급
 ```bash
-~/.claude/skills/grant-wash-voucher/grant-wash-voucher.js --user <userId> --service 135 --count <N>
+~/claude/scripts/grant-wash-voucher.sh --user <userId> --service 135 --count <N>
 ```
 - `--service` 생략 시 기본 135(외부만). `--count` 생략 시 1.
 - `--dry-run` : 로그인·엔드포인트만 확인하고 지급 안 함.
@@ -45,13 +45,13 @@ description: 고객에게 세차권(user_service)을 지급한다. 특히 "티�
 
 ### 4. DB 검증 (지급 후 필수 — "지급했습니다"만 쓰지 말 것)
 ```bash
-~/.caramel-team-setup/mysql-query.sh "SELECT COUNT(*) cnt, SUM(paid_yn=1) paid, SUM(used_yn=0) unused, SUM(deleted_yn=0) alive, MIN(ended_at) end FROM user_service WHERE user_id=<userId> AND service_id=<serviceId> AND id >= <첫 us_id>;"
+~/claude/mysql-query.sh "SELECT COUNT(*) cnt, SUM(paid_yn=1) paid, SUM(used_yn=0) unused, SUM(deleted_yn=0) alive, MIN(ended_at) end FROM user_service WHERE user_id=<userId> AND service_id=<serviceId> AND id >= <첫 us_id>;"
 ```
 - 지급 전 baseline count와 비교해 정확히 N개 늘었는지, paid/unused/alive/무기한 확인.
 - 결과를 표로 보고 (userId, serviceId, 개수, us_id 범위, 만료).
 
 ## 주의
 - **prod 즉시 반영.** 되돌리려면 발급된 us_id를 `deleted_yn=1`로(어드민 API 티켓 수정 경로).
-- 인증: `~/.config/caramel/admin.env` (ADMIN_USERNAME / ADMIN_PASSWORD / CARAMEL_GATEWAY). lms 스킬과 동일.
+- 인증: `~/.config/caramel/admin.env` (계정 gobul21, CARAMEL_GATEWAY). lms 스킬과 동일.
 - 이 엔드포인트는 **caramel-api** 게이트웨이다. zero-api 어드민 헬퍼(`caramel-admin-api.sh`)의 `tickets {productIds}`로는 service 135를 못 넣는다(135는 product 없음).
 - 대량(수십 개+) 지급 전 개수·비용 한 번 더 환기.

@@ -25,10 +25,10 @@ caramel-sales-admin SmsSender에 등록된 번호만 사용 가능. 이외는 �
 
 | 번호 | 주인 | 비고 |
 |------|------|------|
-| `15445932` | 사무실 1544-5932 | **디폴트 — 당번은 이것만 쓴다** |
-
-개인 번호도 일부 등록돼 있으나 발신 주체가 회사가 아니게 되므로 당번 업무에서는 쓰지 않는다.
-현재 등록 목록은 caramel-sales-admin > SmsSender에서 확인.
+| `15445932` | 사무실 1544-5932 | **디폴트** |
+| `01093277016` | 대표 | |
+| `01020866510` | 주성 (사용자 본인) | 테스트 발송용 |
+| `01049664316` | 지원 | |
 
 ## 무료수신거부 문구 (자동 추가)
 
@@ -66,8 +66,8 @@ messageGroup: claude_<timestamp>
 개인화 발송이면 첫 1~2명 치환 결과를 같이 보여주기.
 
 ### 3. Confirm (안전장치)
-- **받는 사람이 실행자 본인 번호뿐**(테스트 발송): 그냥 보낸다
-- **그 외 (고객이 1명이라도 포함)**: 반드시 명시적 yes 받기
+- **받는 사람이 본인 번호(`01020866510`)뿐**: 그냥 보낸다
+- **그 외 (다른 사람 1명이라도 포함)**: 반드시 명시적 yes 받기
   > 이대로 N명에게 발송할까? (yes/no)
 
   사용자가 "네/응/yes/ㅇ/ok/발송해줘" 같은 명확한 긍정 안 하면 발송 금지.
@@ -78,7 +78,7 @@ messageGroup: claude_<timestamp>
 
 **단일 본문 (모두 같은 내용):**
 ```bash
-~/.claude/skills/lms/lms-send.js \
+~/claude/scripts/lms-send.sh \
   --to <CSV번호> \
   --channel LMS \
   --subject <제목> \
@@ -94,7 +94,7 @@ CSV 파일 형식: `phone,var1,var2,...` (한 줄에 한 명)
 ```
 
 ```bash
-~/.claude/skills/lms/lms-send.js \
+~/claude/scripts/lms-send.sh \
   --csv-file recipients.csv \
   --channel LMS \
   --subject "$1님 안내" \
@@ -136,14 +136,14 @@ LMS 발송은 비용 발생. 대량 발송 (>100명) 전엔 한 번 더 확인.
 
 ### 자격증명
 - 위치: `~/.config/caramel/admin.env` (chmod 600)
-- 계정: 어드민 공용 계정 (팀 셋업 시 전달받음)
+- 계정: `gobul21` (어드민 공용)
 - ADMIN_TOOLS 권한 필요
 
 ## Dry run
 실제 발송 없이 페이로드만 보고 싶으면:
 ```bash
-~/.claude/skills/lms/lms-send.js --to ... --dry-run
-~/.claude/skills/lms/lms-send.js --csv-file ... --content ... --dry-run  # 첫 3명 치환 미리보기
+~/claude/scripts/lms-send.sh --to ... --dry-run
+~/claude/scripts/lms-send.sh --csv-file ... --content ... --dry-run  # 첫 3명 치환 미리보기
 ```
 대량 발송 / 개인화 전엔 항상 dry-run으로 한 번 확인할 것.
 
