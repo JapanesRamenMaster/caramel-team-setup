@@ -206,10 +206,9 @@ def route_score(reservations, lat, lon, hour):
 
 ### 어드민 토큰 발급
 ```bash
-. ~/.config/caramel/admin.env   # ADMIN_USERNAME / ADMIN_PASSWORD
 TOKEN=$(curl -s -X POST "https://api-prod.thetrive.com/v1/auth/admin/token" \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" \
+  -d '{"username":"gobul21","password":"xkck66791!"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['accessToken'])")
 ```
 

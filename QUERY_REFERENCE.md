@@ -257,6 +257,10 @@ HAVING COUNT(DISTINCT ua.user_id) >= 5   -- 오탈자성 1~2건 단지 제거
 - ⚠️ **zone 폴리곤이 아예 없는 구가 있다**(중구·광진·양천·동작·관악·종로 등). 그 주소는 최근접 fallback으로 엉뚱한 zone에 떨어진다(예: 중구 신당동 → Z9). **"존 외"로 잡힌 건이 실은 폴리곤 공백 산물일 수 있으니, 존 일치를 목표로 삼기 전에 실거리부터 볼 것.**
 - ⚠️ **반대로 폴리곤이 행정구역을 넘어 과하게 뻗은 경우도 있다.** 실측(2026-07-26): **성남시 중원구 여수동(127.12757, 37.41799)은 `ST_Contains`상 Z16(강동/송파) 단독 포함**이고 Z0(성남)은 미포함(convex hull에만 걸림). ⟹ **성남 예약이 Z16 담당자에게 붙는 것은 시스템상 "정상"**이다. 행정구역명과 zone 이름이 안 맞는다고 곧바로 오배정을 선언하지 말고 `ST_Contains`로 실판정할 것.
 
+- 🔴 **"공동구역"은 `zone` 테이블에 없다 (2026-08-20).** 셀장 6명 체제의 공동구역(강남·서초 중심에 용산·송파 일부)은 `zone6_areas.geojson`의 `properties.code='BELT'` MultiPolygon이 정본이고, 점-내부 판정을 애플리케이션에서 해야 한다(ray casting, `area` 대신 geojson 좌표 순서 **(lng, lat)**). Z12·Z3·Z5로 근사하면 경계가 달라 물량이 안 맞는다. 같은 파일에 팀존 Z1~Z6·서브존 SZ*도 들어 있어 `zone` 테이블의 Z0~Z17과 **이름이 겹치지만 다른 체계**다 — 섞지 말 것. 팀 배포물에는 없는 파일이라 없으면 요청할 것.
+- 🔴 **세차 "건수"를 영업 대상 "고객 수"로 보고하지 말 것 (2026-08-20 실측).** 기존 고객은 한 달에 여러 번 받으므로 두 숫자가 1.6배 벌어진다. 공동구역 타겟 실측(2026-04~07) = **기존 고객 1인당 월 1.55~1.83건**, 신규는 정의상 1인 1건. 9월 추산도 건수로는 508건인데 사람으로는 **322명**(신규 51 + 기존 271)이었다. "대상이 몇 명이냐"는 질문에 건수를 답하면 영업 물량이 통째로 부풀려진다. ⟹ 모수 질문에는 `COUNT(DISTINCT (월, user_id))`로 세고, **현장 단위까지 환산해 끝낸다**(322명을 디테일러 12명이 20 운영일에 → 1인당 하루 1.5명). ⚠️ 월별 distinct 유저는 월끼리 더하면 중복되니 **월 평균으로 내고 운영일 계수로 보정**할 것.
+- ⚠️ **일평균의 분모는 "실제 세차가 발생한 distinct 날짜"로 세라.** 달력 영업일로 나누면 공휴일·전사 셧다운(2026-07-17 전국 4건)이 분모에 들어가 일평균이 낮게 나온다.
+
 ### 2g. source_type 능동/자동 구분
 
 - **고객 직접(능동)**: `source_type IS NULL OR source_type = 'CUSTOMER_DIRECT'` — 대부분의 고객 예약 (NULL이 절대다수, 약 85%)
@@ -848,8 +852,10 @@ JOIN entitlement_package_instance epi ON epi.id = epit.package_instance_id
 - 실사례: 전용 결제링크 구독(234,000원/월)이 2026-05·06월 청구 0건이었고 `card_payment`도 0행 = 미시도. 원인은 04-06 결제 58분 뒤 고객이 누른 **2개월 일시정지**(log에 `ended_at 2026-05-05 → 2026-07-05`, `type=USER`)였다.
 
 **1회권 vs 구독 구분:**
-- **1회권**: `user_service.subscription_id IS NULL`
 - **구독 세차**: `user_service.subscription_id IS NOT NULL`
+- **비구독**: `user_service.subscription_id IS NULL`
+- 🔴 **이 NULL 칸을 "1회권"이라고 부르면 틀린다 (2026-08-20 실측).** 5·10회 횟수권 소진분·제휴 커스텀 상품·`product_id`가 NULL인 지급분이 전부 같은 칸에 들어온다. 공동구역 타겟 완료세차(2026-04-01~08-18) 비구독 621건의 내역 = 1회권 성격 352(`외부 + 내부` 202·`외부만` 150) + `5회/10회 이용권` 89 + `product_id` NULL 167 + 제휴·커스텀 13. **"1회권 N건"으로 보고하면 상품명 기준 실제 1회권보다 1.8배 부풀려진다.** 최소한 `us.product_id → product.name`까지 까고, 진짜 세그먼트가 필요하면 §5c-2의 4단 판정을 쓸 것.
+  - 실사고: 같은 모수를 "구독/1회권/신규 3종"으로 집계한 기존 산출물이 월 468건이었는데, 비구독을 통째로 세면 508건이 된다. 구독·신규 칸은 ±3건으로 재현되고 **차이 40건이 전부 이 칸에서 나왔다.** 3종 합계를 인용할 때는 "무엇이 3종 밖으로 빠졌나"를 같이 확인할 것.
 
 **구독 첫 세차 식별** (user_id + subscription_id 기준):
 ```sql
@@ -862,6 +868,21 @@ first_sub_reservations AS (
 )
 ```
 `MIN(r.id)` 사용 이유: 같은 `created_at` 충돌 방지.
+
+### 5e. 🔴 결제 행 해석 — `deleted_yn`은 취소가 아니고, 어느 표면에서 만들어졌는지는 metadata로 갈린다 (2026-08-19 실측)
+
+- **`payment.deleted_yn=1`은 PG 취소·환불이 아니다.** 레거시 `createCartPayment`가 같은 카트로 재시도할 때 그 카트의 이전 payment를 **`status='PAID'`인 것까지 전부** soft-delete하고, 딸린 `user_service`·`user_option`도 같이 `deleted_yn=1`로 만든다. `deleted_yn`으로 "취소됐네"라고 판정하면 **실제 승인된 결제를 없는 것으로 센다.**
+  - **환불 여부 정본 = `payment.metadata.$.refundRecords`** 존재 여부(+`status IN ('CANCELED','PARTIAL_CANCELED')`).
+  - ⟹ **한 `cart_id`에 `status='PAID'`가 2건 이상이면 중복 청구 의심 신호다.** `deleted_yn`을 무시하고 세라:
+    ```sql
+    SELECT cart_id, COUNT(*) paid_cnt, SUM(amount) total
+    FROM payment WHERE status='PAID' GROUP BY cart_id HAVING paid_cnt > 1
+    ```
+- **`payment.metadata.$.__platform__`이 있으면 레거시 웹(careplus-web)에서 만든 결제다.** zero(`caramel-zero`)는 이 키를 쓰지 않고 `metadata`에 `{point}`만 넣는다. 같은 기능이 두 표면에 걸쳐 있을 때 **어느 프론트에서 결제가 났는지 가르는 유일한 축**이다. 레거시 결제는 `metadata.$.prices`(품목 배열)도 함께 갖는다 — zero엔 없다.
+- **`cart.metadata.$.reservationProjectedDurationMinutes`가 있으면 zero가 만든 옵션 결제 링크 카트다.** 옵션 1개당 `cart_item` 1개를 `type='PRODUCT'`(`record_id`=**product.id**, 그 product의 `type='OPTION'`)로 넣는다 — 옵션이 `type='OPTION'` 행으로 들어오는 레거시 카트와 모양이 다르다. 옵션 상품↔옵션 매핑은 `product_option(product_id, option_id)`.
+- **`crmel.link/<key>` 역추적** = `SELECT target_url FROM link WHERE \`key\`='<key>'`. **`target_url`이 상대경로면 단축링크 리졸버가 레거시 호스트(`caramel.thetrive.com`)에 붙여 해석한다** — zero 웹이 아니다. 전체 98,722건 중 절대 URL 93,922 / 상대경로 4,796.
+- **포인트 잔액 = `SELECT SUM(amount) FROM user_point_history WHERE user_id=?`** (잔액 컬럼 없음). 음수면 중복 차감이 실제로 일어난 확정 증거다 — 차감 행은 `payment_id`를 갖고 `reason='commerce checkout point usage'`.
+- ⚠️ **`card_payment`에 행이 없어도 결제가 안 된 게 아니다.** PortOne v2 간편결제 경로는 행을 남기지 않는 경우가 있다. §5d의 "row 없으면 미시도"는 정기결제(빌링키) 청구에 한한 규칙이다.
 
 ---
 
@@ -990,6 +1011,17 @@ first_sub_reservations AS (
 - 🔴 **"그날 예약 0건 = 여유 있음"이 아니다 (2026-08-06 실측).** 2026-08-07 예약 0건인 디테일러 8명 중 7명이 연차·퇴사예정이었다(한홍구·김승규·남경우·김민호·김남용·장태훈·이승제). 건수로 인계처를 고르면 **가장 안 되는 사람만 뽑힌다.** 후보는 위 ①~⑤ + effective 스케줄 존재를 먼저 통과시킨 뒤 건수로 정렬할 것.
 - ⚠️ **실제 테이블명은 `detailer_supply_sheet`** (문서·구두로 "supply_sheet"라 부르지만 `SHOW TABLES LIKE '%supply%'`엔 `detailer_supply_sheet`·`detailer_supply_load_log`·`detailer_supply_weekly_snapshot`뿐). 유용 컬럼: `name`·`status`·`cell_name`(셀장)·`region`(Z번호)·`phone_norm`·**`home_address`(자택, 디테일러 출퇴근 동선 판단용)**·`car_plate`·`batch`(기수)·**`hire_date`(입사일)**·`work_start_date`(실투입일)·`retired_date`. ⚠️ `name`·`phone_norm` 비교 시에도 **`COLLATE utf8mb4_general_ci` 양쪽에 붙일 것** — 안 붙이면 `Illegal mix of collations`로 죽는다.
 - 🔴 **이 테이블은 사본이다. SOT는 시트, DB는 매일 1회 전량 덮어쓰기 (2026-08-16 실측).** 시트 `1jAoHuZRjoQ0W2Amsf1rUvxMSwMsqO9L_BJuWW0YQrSw` "공급 현황" 탭에 붙은 **바운드 Apps Script**(`loadDetailerSupplyToDB`)가 매일 12:38 KST에 142행을 읽어 `detailer_supply_sheet`(+`_weekly_snapshot`)에 UPSERT한다. **DB 행을 직접 UPDATE하면 다음 실행에 덮여 사라진다** — 고칠 값은 시트에서 고칠 것. 바운드 스크립트라 clasp 프로젝트(`~/claude/*-gas-live`)엔 없다.
+- 🔴🔴 **`status`는 허용값 5개 밖이면 그 행이 통째로 스킵되고 DB는 옛 값에 얼어붙는다 (2026-08-20 실측).** 적재기 `ALLOWED_STATUS = {현직, 교육중, 파견, 퇴사, 하차}`. 시트에 `오토랩 근무`처럼 목록 밖 문자열을 적으면 그 행은 `INSERT`도 `UPDATE`도 안 되고 **직전 값이 그대로 남는다** — 에러도 나지 않고 `error_message`도 null이다. 실사례: 송민호·최윤호·손정민·전승엽 4명이 시트상 `오토랩 근무`인데 DB엔 계속 `현직`으로 남아(송민호는 2026-02-13부터) 카라멜포스 스케줄 상단 요약이 총원 65·현장 58로 과대집계됐다. **DB의 `status`를 "지금 시트에 적힌 값"으로 믿지 말 것.**
+  ```sql
+  -- 얼어붙은 행 탐지: skipped_bad_status > 0 이면 그 수만큼 stale 행이 있다
+  SELECT DATE_FORMAT(started_at,'%Y-%m-%d %H:%i') started, total_rows, eligible_rows,
+         updated_rows, skipped_no_phone, skipped_bad_status
+  FROM detailer_supply_load_log ORDER BY started_at DESC LIMIT 3;
+  ```
+  ⚠️ 새 상태값이 필요하면 시트만 고쳐선 안 되고 **바운드 스크립트의 `ALLOWED_STATUS`를 먼저 늘려야** 한다. 순서를 반대로 하면 계속 스킵된다.
+  ⚠️ **정상 baseline = `skipped_bad_status` 1** (시트의 `퇴사자` 구분행이 상태 빈칸이라 항상 1건 잡힌다). **2 이상이면 누군가 목록 밖 값을 적은 것.**
+  ✅ **허용값은 6개다: `현직·교육중·파견·퇴사·하차·타부서`** (2026-08-20 `타부서` 추가 — 오토랩·정비영업 등 세차 조직 밖 재직자. 부서 구분은 `region`에 적는다). `타부서`는 주간 스냅샷 `active_cnt`/`active_assumed_cnt`에서도 `퇴사`와 함께 0 처리된다 — 안 그러면 `work_start_date`가 채워져 있어 활성으로 세어진다.
+- 🔑 **카라멜포스(sales-admin) 스케줄 보드 상단 요약 = `status` 3개 값의 단순 합.** `GET /careplus/detailer/supply-sheet/schedule-summary`가 `GROUP BY status` 후 `현직`=현장·`파견`·`교육중`만 세고 총원 = 그 셋의 합이다(`region` 무관). 그래서 오토랩 등 세차 안 하는 인원을 빼려면 **`status`를 고치는 게 유일한 경로**이고, 새 값을 쓰면 집계 코드 변경 없이 자동 제외된다. 반대로 `region`으로 거르려면 소비자 전부(요약·셀장 스코프·디렉터리·공지)를 고쳐야 한다.
 - **적재 가동/신선도 판정 = `detailer_supply_load_log`** (`started_at`·`total_rows`·`inserted_rows`/`updated_rows`·`error_message`). 값이 이상하면 쿼리를 의심하기 전에 여기부터 볼 것.
   ```sql
   SELECT TIMESTAMPDIFF(HOUR, MAX(started_at), NOW()) hours_ago,
@@ -1275,6 +1307,14 @@ BEFORE/AFTER 섹션 종류:
 - `SHOW TABLES LIKE '%trade%'`·`'%sale%'` → 0건. 매매 전용 테이블 자체가 없다.
 - ⟹ 매매 대수·매출·"세차 고객의 매매 전환율"은 **회계 기장 또는 계획치**로만 말할 수 있다. DB로 산출한 것처럼 쓰면 안 된다. 상세 = memory `reference_repair_and_trade_revenue_sources.md`.
 
+**반얀 현장 리포트 payload (`banyan_presentation`) — 사진 키가 코드와 다르다 (2026-08-21 실측)**
+
+- 5섹션 구조: `concern`(신경쓰는 곳) · `feature`(차량 특징, `featureId` = 코드 `FEATURE_CATALOG` 14종) · `freestyle`(선택) · `front`(전면부 유막) · `leveler`(상하부 수평기) + `comment`.
+- 🔴 **사진 키 = `beforePhotoUrl`/`afterPhotoUrl`.** 코드 타입(`apps/web/.../report-editor/report-state.ts`)의 `beforePhoto`/`afterPhoto`·`photo`로 `JSON_EXTRACT`하면 **에러 없이 전건 NULL**이 나와 "사진 없음"으로 오판한다. `front`·`leveler`도 코드상 단일 사진이지만 payload는 before/after 쌍이다.
+- 커버리지(291건, 2026-07-21~08-21): `feature` 100% · `concern.note` 84.5%(246) · `freestyle` 107 · `comment` **9건뿐** · `feature.note`는 **전건 빈 문자열**(설계상 미사용).
+- 리포트 사진은 `wash_result_image`에 **안 들어간다**(S3 `banyan-report-photos/` + 이 payload만). 그 테이블의 반얀 행은 어드민 완료 처리용 placeholder다.
+- 고객/현장 화면은 **무인증 공개**: `https://b2b.thetrive.com/banyan/report/{token}` (현장 프레젠테이션 모드 `?mode=onsite`).
+
 ### 6e. 쿠폰
 
 - 테이블: `coupon_code`(개별 코드), `coupon_campaign`(파트너 캠페인 — **`partner_name`** 필드), `coupon_code_reward`(보상 정의), `coupon_code_usage`(사용 이벤트). **`coupon`/`discount` 테이블은 없다.**
@@ -1399,6 +1439,7 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - **`telephony_call_log`**: 050 경유 통화의 CDR. `call_started_at`은 **UTC 저장**(+9h 필요, `reservation_datetime`과 동일). 예약 귀속 = `reservation_id`/`detailer_id`/`customer_vno_id` — 크론 `telephonyAttributeCalls`(*/10분)가 사후에 채움. **미귀속 2~4건/일은 정상**(부분귀속 설계: vno 매칭만 되고 예약 모호). 발신자/수신자 = `calling_num`(디테일러 실번호)·`vno`(고객 050)·`called_num`(고객 실번호).
 - ⚠️ **"통화 수 적다" ≠ 장애**: 예약 중 050 통화가 잡히는 비율은 **30~45%가 정상 밴드**. 디테일러 절반가량은 앱 050 발신을 안 씀(문자 사용 — SMS는 시스템 미캡처 / 저장된 실번호 직발신). 19시 KST 통화 스파이크(일요일 포함)는 D-1 저녁 사전 확인콜로 정상.
 - **`customer_vno`**: 고객에게 050 동적 부여. **user_id 단위 키잉(폰번호 아님)** — 한 폰이 여러 app_user면 특정 user_id에만 붙음. 통화↔vno 매칭 구간 = `[assigned_at, COALESCE(cleared_at, expires_at)]`. ⚠️ `ASSIGN_FAILED` 대량(수십 건/일) = 더미폰 유저(01012345678류) 매시 재시도 반복이지 시스템 장애 아님 — `COUNT(DISTINCT user_id)`로 먼저 확인.
+- 🔴 **`customer_vno`에 050 번호 문자열이 없다** — `SELECT vno FROM customer_vno`는 `Unknown column`. 번호는 `vno_pool_id` FK로 **`vno_pool`(id·vno·status)** 을 조인해야 나온다(prod 전수: 번호 문자열 컬럼 `vno`를 가진 테이블은 `vno_pool`·`telephony_call_log`·`detailer` 셋뿐이고, **`detailer.vno`는 폐기된 "디테일러 고정 부여" 설계의 잔재로 전부 NULL**(163/163, 2026-08-21) — 고객 050을 찾다가 여기 조인하면 빈 결과가 난다). 배정 현황 표준형: `FROM customer_vno cv LEFT JOIN vno_pool p ON p.id = cv.vno_pool_id`. 현재 유효 배정 = `cv.status='ASSIGNED'`(과거 시점 커버리지엔 쓰지 말 것 — 현재상태 컬럼이라 회수된 과거 건이 전부 0으로 보인다. 과거는 `assigned_at`/`cleared_at` 구간으로).
 - **크론 실행 기록 = `job_execution`**(`job_id`→`job.name`, telephony 크론 8종). ⚠️ **status='FAILED'여도 장애 단정 금지** — 유저 1명 실패해도 execution 전체가 FAILED로 기록됨. `result` JSON의 `failureCount`/`successCount`를 먼저 볼 것.
 
 ---
@@ -1446,7 +1487,7 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 |------|------|------|
 | id | int | PK |
 | plate_number | varchar(10) | 차량번호 |
-| model_year | int | 연식 (NULL 약 12%) |
+| model_year | int | 연식 — 🔴 **NULL 42.3%**(73,080/172,888, `deleted_yn=0 AND temp_yn=0`, 2026-08-19 실측). 대체 컬럼 없음 → 아래 참조 |
 | brand | varchar(15) | 브랜드명 **레거시 — 99% NULL. `brand_id` 사용** |
 | brand_id | int | FK → car_brand.id (name 컬럼으로 JOIN) |
 | model | varchar(100) | 모델명 레거시. `model_id` 우선 |
@@ -1463,6 +1504,11 @@ v3에서 로그인이 방문정보 입력 뒤로 밀리면서(`isOnboardingV3Vis
 - ⟹ **"차량등록→예약 전환율"류 지표는 7/13을 기점으로 단절된다.** 분모가 분자의 부분집합에 가까워져 전환율이 구조적으로 튄다. 실측 지문: 타겟차 첫등록 후 **1시간 내 예약 비율** 7/08~7/12 0~11% → 7/13(월) **39%** → 7/27~ 43~75%. 주간 타겟차 등록수 361명(6/29주) → 52명(7/20주).
 - ⟹ 가입→등록→예약 퍼널을 7/13 전후로 한 축에 놓고 읽지 말 것. 온보딩 전환은 DB로 못 잡고 Amplitude 온보딩 진입→완료 퍼널로 봐야 한다.
 - ⚠️ 앱 내 차고 추가 등 온보딩 밖 경로는 여전히 독립적으로 `car` row를 만든다 — 그래서 전환율이 100%가 아니다.
+
+🔴 **연식(`model_year`) 결측은 다른 컬럼으로 못 채운다 (2026-08-19 실측).** `model_year`가 NULL인 73,080대 중 `manufacture_at`이 있는 건 **24대**, `vin` 15대, `registered_at`·`mileage` **0대**. = 차량 상세정보는 한 덩어리로 같이 채워지고 같이 빈다(`model_year` NOT NULL 99,808 ≈ `manufacture_at` NOT NULL 99,831).
+- ⟹ **연식 분포/평균을 낼 때 분모는 전체 대수가 아니라 `model_year IS NOT NULL` 대수다.** 42%가 빠지므로 "N대 중 X%가 2020년 이후"식 서술은 어느 분모인지 반드시 병기할 것.
+- ⟹ 결측을 `manufacture_at`/`registered_at`으로 보정하려는 시도는 헛수고. 커버리지 0에 가깝다.
+- ⚠️ 결측이 랜덤이라는 보장은 없다(상세정보 입력은 구독·정비 고객에 쏠릴 수 있음) → 연식 분포는 편향 가능성을 함께 적을 것.
 
 **국산차 브랜드 제외 패턴:**
 ```sql
@@ -1681,6 +1727,11 @@ LEFT JOIN service s ON s.id = us.service_id
   - **옵션 매출 정본 필터 = `type='OPTION'` OR (`type='VOUCHER'` AND `metadata.pathname='/payment/options'`).** 둘을 합쳐야 시계열이 안 끊긴다.
   - **writer 판별은 `type` + `metadata`로만 한다. `cart_id`로는 못 가른다** — 2026-08-11 실측: 두 경로 다 `cart_id`가 채워진다(레거시 40/40, zero 413/413 non-null). 레거시는 `metadata.href`가 `caramel.thetrive.com/payment/options?reservationId=N`(레거시 웹) 40/40, zero는 `href` 없음.
   - 표면도 갈려 있었다: **디테일러 앱·CS가 만든 링크 = 레거시 웹 결제 페이지**, **고객 앱 = zero 카트**(`/payment/cart/{uuid}`). 2026-08-10 승격으로 디테일러·어드민 발급도 zero로 넘어왔다. [[reference_wash_revenue_sources]]
+  - 🔴 **2026-08-11부터 세 번째 조합이 생겼다 — `type='OPTION'` + `metadata.__platform__` 있음 = zero가 만든 카트를 레거시 웹이 결제한 것이고, 100% 실패한다 (2026-08-19 실측).** 디테일러 앱 발급 링크(`crmel.link`)의 `link.target_url`이 상대경로라 리졸버가 **레거시 호스트**(`caramel.thetrive.com`)에 붙여 careplus-web이 체크아웃한다. 레거시 `PurchaseButton`의 `switch(payment.type)`에 `OPTION` 케이스가 없어 클릭이 조용히 죽는다. 실측 **146건 시도 / PAID 0건**(카트 4개·고객 3명, 08-11~08-18). 같은 기간 `__platform__` 있는 `VOUCHER`는 74건 PAID → **`__platform__` 하나로 "레거시 웹이 결제했다"를 가른다.** ⟹ `type='OPTION'`을 전부 zero로 귀속하면 오답.
+  - **결제 CTA가 죽었는지 탐지 = 한 `cart_id`에 `payment` row가 여러 개 쌓였는데 PAID가 0인 것.** 고객이 버튼을 반복해서 누른 흔적이다(실측 카트 69418 = **82회**). ⚠️ **`deleted_yn=0`으로 거르면 안 보인다** — 재시도마다 직전 미결제 payment를 `deleted_yn=1`로 죽이고 새로 만들어서 마지막 1행만 남는다.
+  - **옵션 결제링크로 만들어진 카트 식별 = `JSON_EXTRACT(cart.metadata,'$.reservationProjectedDurationMinutes') IS NOT NULL`.** 고객 앱 자체 옵션 추가 카트와 구분되는 유일한 표식.
+  - **고객이 받은 단축링크가 뭘 가리키는지 = ``SELECT target_url FROM link WHERE `key`='<crmel.link 뒤 문자열>'``.** 전체 98,722건 중 상대경로 4,796건인데, **상대경로는 레거시 웹 기준으로 해석**된다(절대 URL 93,922건은 그대로).
+  - ⚠️ 잔함정: `product` 테이블엔 **`deleted_yn` 컬럼이 없다**(폐기 판정은 `sales_status`). `user_coupon` 테이블도 없다(쿠폰은 `coupon_code*`/`promotion_application`).
 - 🔴 **옵션은 한 이름이 티어별 여러 `option_id`로 흩어져 있다 — id 하나로 필터하면 절반 이상 누락 (2026-08-10 실측).** `내부 세차 추가` = **74·85·86·87·88·89·90·91** 8개(건수 88=441 · 87=322 · 89=299 · 86=78 · 90=64 · 91=17 · 74=13 · 85=11). 상품 코스 `product_id BETWEEN 4037 AND 4057`과 같은 유형의 함정이다. **정본 필터 = `options.name = '내부 세차 추가'`**(티어가 늘어도 자동 포함).
   - ⚠️ **`name LIKE '%내부%'`로 넓히지 말 것** — `내부 스팀 청소`(62, 1,754건)가 섞인다. 이건 내부세차 추가가 아니라 별개 심화옵션이고, 외부만 예약엔 주당 0~3건만 붙는다.
   - 구 UI `내부까지 청소해 주세요`(68, 60건)는 2024-12~**2025-05로 종료**. 그 이전 기간을 보는 쿼리에서만 합칠 것.
