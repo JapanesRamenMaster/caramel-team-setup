@@ -25,6 +25,8 @@ allowed-tools:
 
 # /slides — 카라멜 덱 (brief → 슬롯 캐스팅 → 스니펫 조립 → 기계 검증)
 
+> 한국어 산문은 `deslop` 스킬의 규칙(존재·구조·표현 3축)을 적용해 쓰고, 내보내기 직전에 `slop-audit` 게이트를 통과시킨다.
+
 **산출 형식은 항상 HTML canonical.** PPTX는 만들지 않는다. 공유가 필요하면 HTML에서 export.
 
 한국어로 소통한다.

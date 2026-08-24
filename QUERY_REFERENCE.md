@@ -977,6 +977,8 @@ first_sub_reservations AS (
 - 최근 운영 컨벤션: `slot_id = NULL`, `type = 'DEFAULT'`, description에 사유 메모.
 - rule의 start/end_time은 `'1970-01-01 HH:MM:SS'` UTC (예: 10~19시 KST = `01:00:00`~`10:00:00`), `service_region_group_id = NULL`.
 - Fill Rate = `실제 예약 디테일러 수 / 스케줄 기반 공급 가능 디테일러 수`
+- 🔴 **raw `end_time <= start_time` 을 "자정 넘김 근무"로 읽지 말 것 (2026-08-24 실측).** UTC 저장이라 **KST 08~17시 근무가 `23:00:00`~`08:00:00`** 으로 들어간다. 활성 rule 11,756행 중 **3,469행(29.5%)이 raw 기준 뒤집혀 있고 전부 정상 주간 근무다.** KST로 정규화하면 진짜 자정을 넘는 rule은 **0건**(길이 0인 `10:00=10:00` 5행만 있고 그마저 2026-08-20 만료). 정규화식 = `MOD(TIME_TO_SEC(t)+32400, 86400)`. 도메인 `work-schedule.ts intervalOnSeoulDate` 가 `endAt <= startAt` 이면 +1일 올리는 것도 **이 UTC 랩을 흡수하는 장치이지 야간 근무 지원이 아니다** — 이 코드를 근거로 "야간 근무가 있다"고 결론내면 틀린다.
+- ⚠️ **TIME 컬럼도 헬퍼 JSON에서 tz 시프트된다** — `start_time` 을 그냥 SELECT 하면 `1970-01-01T14:00:00.000Z`(=저장 `23:00:00`)로 찍혀 값이 통째로 달라 보인다. 원값은 `CAST(start_time AS CHAR)` 로 뽑을 것.
 
 **detailer_work_schedule.type — DEFAULT만 있는 게 아니다 (2026-07-13)**
 - `type` 값: `DEFAULT`(일반 존 배정) / `BANYAN_TREE`(반얀트리 주소 전용) / `BANYAN_TREE_EXTENDED`(반얀 확장 그리드, 2026-07-16 prod 실존 확인) / `HEY_DEALER`(외부 사업 이탈 마커, lookup에서 제외).
