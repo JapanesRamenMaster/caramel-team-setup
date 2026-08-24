@@ -143,7 +143,7 @@ def check_cli(argv):
         text = sys.stdin.read()
     hits = find_hits(strip_quoted(text))
     if not hits:
-        print("clean — 고신뢰 마커 없음. 존재·구조 축은 deslop 스킬로 직접 볼 것")
+        print("clean — 고신뢰 마커 없음. 존재·이해·구조 축은 deslop 스킬로 직접 볼 것")
         return 0
     print("slop 마커 " + str(len(hits)) + "건: " + ", ".join(hits))
     print("deslop 스킬 규칙으로 고칠 것. 인용·Before 예시면 백틱으로 감쌀 것")

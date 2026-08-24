@@ -78,7 +78,7 @@ def main():
         "permissionDecision": "deny",
         "permissionDecisionReason":
             f"[발송 slop 게이트] {label}에 slop 마커가 남았다: {', '.join(hits)}. "
-            "deslop 스킬 규칙(존재→구조→표현)으로 그 부분을 고쳐 다시 보내라. "
+            "deslop 스킬 규칙(존재→이해→구조→표현)으로 그 부분을 고쳐 다시 보내라. "
             "Before 예시로 일부러 인용한 것이면 백틱으로 감싸거나 그렇다고 한 줄 남기고 넘어가라.",
     }}, ensure_ascii=False))
     sys.exit(0)
