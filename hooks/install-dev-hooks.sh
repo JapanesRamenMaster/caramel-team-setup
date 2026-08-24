@@ -11,10 +11,18 @@
 #   - matcher 그룹이 없으면 만들고, 있으면 append 한다.
 #   - setup.sh(최초) / update.sh(매 세션) 양쪽에서 호출해도 안전(멱등).
 #
-# 사용: bash hooks/install-dev-hooks.sh [INSTALL_DIR]
+#   - 역할 무관 훅(COMMON_SPEC)과 dev 전용 훅(DEV_SPEC)을 나눠 등록한다.
+#     ROLE 인자가 dev 계열이 아니면 COMMON_SPEC만 등록한다.
+#
+# 사용: bash hooks/install-dev-hooks.sh [INSTALL_DIR] [ROLE]
 
 set -u
 INSTALL_DIR="${1:-$HOME/.caramel-team-setup}"
+ROLE_ARG="$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')"
+case "$ROLE_ARG" in
+    개발|개발자|엔지니어|dev|developer|engineer) IS_DEV=1 ;;
+    *) IS_DEV=0 ;;
+esac
 HOOKS_DIR="$INSTALL_DIR/hooks"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
@@ -26,7 +34,7 @@ mkdir -p "$HOME/.claude"
 
 PY_BIN="$(command -v python3)"
 
-HOOKS_DIR="$HOOKS_DIR" SETTINGS_FILE="$SETTINGS_FILE" PY_BIN="$PY_BIN" python3 - <<'PYEOF'
+HOOKS_DIR="$HOOKS_DIR" SETTINGS_FILE="$SETTINGS_FILE" PY_BIN="$PY_BIN" IS_DEV="$IS_DEV" python3 - <<'PYEOF'
 import json, os, shlex, sys
 
 hooks_dir = os.environ["HOOKS_DIR"]
@@ -34,7 +42,13 @@ settings_file = os.environ["SETTINGS_FILE"]
 py = os.environ["PY_BIN"]
 
 # (event, matcher, script) — 내 로컬 하니스와 동일 구성
-SPEC = [
+
+# 역할 무관. 한국어 산문은 누가 쓰든 같은 기준으로 검사한다.
+COMMON_SPEC = [
+    ("Stop", "", "slop-gate.py"),
+]
+
+DEV_SPEC = [
     ("PreToolUse", "Edit|Write", "caramel-zero-agents-gate.py"),
     ("PreToolUse", "Edit|Write", "prisma-migration-guard.py"),
     ("PreToolUse", "Bash", "db-guardrail.py"),
@@ -54,6 +68,8 @@ except (json.JSONDecodeError, OSError) as e:
 
 data.setdefault("hooks", {})
 added = []
+
+SPEC = COMMON_SPEC + (DEV_SPEC if os.environ.get("IS_DEV") == "1" else [])
 
 for event, matcher, script in SPEC:
     path = os.path.join(hooks_dir, script)
@@ -79,12 +95,13 @@ for event, matcher, script in SPEC:
         groups.append({"matcher": matcher, "hooks": [{"type": "command", "command": cmd}]})
     added.append(script)
 
+label = "가드레일 훅" if os.environ.get("IS_DEV") == "1" else "공용 훅"
 if added:
     tmp = settings_file + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, settings_file)
-    print("dev 가드레일 훅 등록: " + ", ".join(added))
+    print(f"{label} 등록: " + ", ".join(added))
 else:
-    print("dev 가드레일 훅 이미 등록됨")
+    print(f"{label} 이미 등록됨")
 PYEOF
