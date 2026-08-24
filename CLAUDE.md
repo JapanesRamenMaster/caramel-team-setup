@@ -112,7 +112,7 @@
 
 ## MCP 연결 가이드
 
-Claude Code에서 외부 서비스 연동은 **Claude.ai 팀 계정의 Integrations**에서 설정합니다.
+Claude Code에서 외부 서비스 연동은 **Claude.ai 팀 계정의 Connectors**에서 설정합니다.
 팀 계정(Thetrive)으로 로그인 후 설정에서 연결하세요.
 
 **연결 가능한 서비스:**
@@ -120,10 +120,11 @@ Claude Code에서 외부 서비스 연동은 **Claude.ai 팀 계정의 Integrati
 - **Slack** — 채널 읽기, 메시지 검색
 - **Linear** — 이슈/프로젝트 관리, 실험문서 업로드
 - **Google Calendar** — 일정 확인
-- **Google Sheets** — 시트 읽기/쓰기
 - **Amplitude** — 이벤트 데이터 조회
 
-연결 방법: Claude.ai 로그인 → Settings → Integrations → 각 서비스 연결
+(Google Sheets는 커넥터가 아니라 setup.sh가 로컬에 설치·등록한다. 별도 연결 불필요)
+
+연결 방법: Claude.ai 로그인 → Settings → Connectors → 각 서비스 연결 (팀 플랜은 관리자만 커넥터를 추가할 수 있음 — 목록에 없으면 맹주성에게 요청)
 연결 후 Claude Code에서 바로 사용 가능합니다.
 
 ## Google Sheets 이메일 설정 (자동 감지)

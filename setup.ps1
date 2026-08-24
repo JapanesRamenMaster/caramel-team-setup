@@ -47,7 +47,7 @@ $DbUser = "caramel_reader"
 $DbName = "caramel-prod"
 
 if (-not $DbHost -or -not $DbPassword) {
-    Write-Host "ERROR: -DbHost와 -DbPassword가 필요합니다. 슬랙 #claude-setup 채널을 확인하세요."
+    Write-Host "ERROR: -DbHost와 -DbPassword가 필요합니다. 맹주성에게 슬랙 DM으로 문의하세요."
     exit 1
 }
 

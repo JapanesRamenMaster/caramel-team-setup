@@ -19,7 +19,7 @@
 2. `bash /tmp/caramel-team-setup/setup.sh --role "{역할}" --db-password "{비밀번호}" --email "{이메일}"`
    - 역할: 팀원이 맡고 있는 역할을 자유롭게 입력 (예: CS, 마케팅, 운영, 개발, 디자인, PM 등)
    - `--role`을 생략하면 대화형으로 물어봄
-   - DB 비밀번호: 팀원에게 "슬랙 #claude-setup 채널에서 확인해주세요"라고 안내
+   - DB 비밀번호: 팀원에게 "맹주성에게 슬랙 DM으로 문의해주세요"라고 안내
    - 이메일: 팀원의 회사 이메일 (예: name@thetrive.com). Google Sheets 연동에 필요
 3. `rm -rf /tmp/caramel-team-setup` (설치 완료 후 임시 파일 정리)
 4. 설치 완료 후 사용자에게 반드시 안내:

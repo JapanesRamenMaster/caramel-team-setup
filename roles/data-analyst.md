@@ -36,7 +36,7 @@
 
 ### 환경 변수 필요
 
-`~/caramel-claude/.env`에 `GRAFANA_TOKEN=glsa_...` 추가 (#claude-setup 채널에서 토큰 받기). 이 토큰 없으면 validate/apply 스크립트 동작 안 함.
+`~/caramel-claude/.env`에 `GRAFANA_TOKEN=glsa_...` 추가 (맹주성에게 슬랙 DM으로 토큰 요청). 이 토큰 없으면 validate/apply 스크립트 동작 안 함.
 
 ### 주의사항
 
