@@ -38,7 +38,19 @@ side-effects: [settings.json 수정]
 
 ## 3. 설치
 
-`update.sh`를 쓰면 세션마다 자동으로 붙는다. 안 쓰면 클로드에게 이렇게 시킨다.
+### 팀 셋업을 안 쓰는 사람 (레포 클론도 필요없음)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JapanesRamenMaster/caramel-team-setup/main/install-slop-gate.sh | bash
+```
+
+훅 스크립트 2개와 스킬 3개를 `~/.claude/` 에 내려받고 `settings.json` 에 등록한다.
+기존 훅과 설정은 보존하고, 여러 번 돌려도 중복되지 않는다.
+팀 셋업으로 심링크된 스킬은 건드리지 않는다. 업데이트는 같은 줄을 다시 돌리면 된다.
+
+### 팀 셋업을 쓰는 사람
+
+`update.sh`가 세션마다 자동으로 붙인다. 수동으로 붙이려면 클로드에게 이렇게 시킨다.
 
 ```
 ~/.caramel-team-setup/hooks/install-dev-hooks.sh 를 내 역할로 실행해서 slop 게이트 훅 등록해줘
