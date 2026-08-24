@@ -44,8 +44,18 @@ py = os.environ["PY_BIN"]
 # (event, matcher, script) — 내 로컬 하니스와 동일 구성
 
 # 역할 무관. 한국어 산문은 누가 쓰든 같은 기준으로 검사한다.
+OUTBOUND = "|".join([
+    "Artifact",
+    "mcp__claude_ai_Slack__slack_send_message",
+    "mcp__claude_ai_Slack__slack_send_message_draft",
+    "mcp__claude_ai_Slack__slack_schedule_message",
+    "mcp__notion__notion-create-pages",
+    "mcp__notion__notion-update-page",
+    "mcp__notion__notion-create-comment",
+])
 COMMON_SPEC = [
     ("Stop", "", "slop-gate.py"),
+    ("PreToolUse", OUTBOUND, "slop-gate-outbound.py"),
 ]
 
 DEV_SPEC = [

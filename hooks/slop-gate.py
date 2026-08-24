@@ -135,8 +135,25 @@ def main():
     sys.exit(0)
 
 
+def check_cli(argv):
+    """`slop-gate.py --check [파일]` — 훅 없이 초안을 검사한다. 파일 없으면 stdin."""
+    if len(argv) > 1 and argv[1] not in ("-", "--"):
+        text = open(argv[1], encoding="utf-8", errors="replace").read()
+    else:
+        text = sys.stdin.read()
+    hits = find_hits(strip_quoted(text))
+    if not hits:
+        print("clean — 고신뢰 마커 없음. 존재·구조 축은 deslop 스킬로 직접 볼 것")
+        return 0
+    print("slop 마커 " + str(len(hits)) + "건: " + ", ".join(hits))
+    print("deslop 스킬 규칙으로 고칠 것. 인용·Before 예시면 백틱으로 감쌀 것")
+    return 1
+
+
 if __name__ == "__main__":
     try:
+        if "--check" in sys.argv[1:2]:
+            sys.exit(check_cli(sys.argv[1:]))
         main()
     except Exception:
         traceback.print_exc(file=sys.stderr)
