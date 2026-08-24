@@ -86,14 +86,13 @@ if [ -d "$WORK_DIR" ] && [ -f "$INSTALL_DIR/build-claude-md.sh" ]; then
   fi
 fi
 
-# 6.6) dev 역할이면 PreToolUse 가드레일 훅 등록/복구 (멱등 — 이미 있으면 no-op)
-if [ -f "$CONFIG_FILE" ] && [ -f "$INSTALL_DIR/hooks/install-dev-hooks.sh" ]; then
-  ROLE_DEV=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
-  case "$ROLE_DEV" in
-    개발|개발자|엔지니어|dev|developer|engineer)
-      bash "$INSTALL_DIR/hooks/install-dev-hooks.sh" "$INSTALL_DIR" >&2 \
-        || echo "WARNING: dev 가드레일 훅 등록 실패 — 코드 작업 전 확인 필요" >&2 ;;
-  esac
+# 6.6) 훅 등록/복구 (멱등 — 이미 있으면 no-op)
+#      공용 훅(Stop slop-gate)은 전 역할, PreToolUse 가드레일은 dev 역할만.
+#      역할 판정은 install-dev-hooks.sh 안에 있다.
+if [ -f "$INSTALL_DIR/hooks/install-dev-hooks.sh" ]; then
+  ROLE_DEV=$(grep "^ROLE=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"')
+  bash "$INSTALL_DIR/hooks/install-dev-hooks.sh" "$INSTALL_DIR" "$ROLE_DEV" >&2 \
+    || echo "WARNING: 훅 등록 실패 — 코드 작업 전 확인 필요" >&2
 fi
 
 # ============================================================

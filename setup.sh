@@ -379,12 +379,8 @@ else
     echo "  $HOOK_CMD"
 fi
 
-# 8-3. dev 역할이면 PreToolUse 가드레일 훅 등록 (보호 브랜치 push·prod 머지·DB 파괴 차단)
-ROLE_LC="$(printf '%s' "$ROLE" | tr '[:upper:]' '[:lower:]')"
-case "$ROLE_LC" in
-    개발|개발자|엔지니어|dev|developer|engineer)
-        bash "$INSTALL_DIR/hooks/install-dev-hooks.sh" "$INSTALL_DIR" || echo "WARNING: dev 훅 등록 실패" ;;
-esac
+# 8-3. 훅 등록 — 공용(Stop slop-gate)은 전 역할, PreToolUse 가드레일은 dev 역할만
+bash "$INSTALL_DIR/hooks/install-dev-hooks.sh" "$INSTALL_DIR" "$ROLE" || echo "WARNING: 훅 등록 실패"
 
 # 9. Node.js 확인 및 mysql2 설치
 echo ""
