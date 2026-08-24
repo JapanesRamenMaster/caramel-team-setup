@@ -254,12 +254,12 @@ DB_HOST="34.64.113.107"
 if [ -n "$ARG_DB_PASSWORD" ]; then
     DB_PASSWORD="$ARG_DB_PASSWORD"
 else
-    read -sp "DB Password (슬랙 #claude-setup 채널에서 확인): " DB_PASSWORD
+    read -sp "DB Password (맹주성에게 슬랙 DM으로 문의): " DB_PASSWORD
     echo ""
 fi
 
 if [ -z "$DB_PASSWORD" ]; then
-    echo "ERROR: DB Password가 필요합니다. 슬랙 #claude-setup 채널을 확인하세요."
+    echo "ERROR: DB Password가 필요합니다. 맹주성에게 슬랙 DM으로 문의하세요."
     exit 1
 fi
 
@@ -273,7 +273,7 @@ DB_PASSWORD=$DB_PASSWORD
 DB_NAME=$DB_NAME
 
 # (선택) Grafana API 토큰 — CBR 작업/검증 도구용
-# 토큰은 #claude-setup 채널에서 확인. 비워두면 validate_one_metric.py 등 미동작.
+# 토큰은 맹주성에게 슬랙 DM으로 문의. 비워두면 validate_one_metric.py 등 미동작.
 GRAFANA_TOKEN=
 EOF
 echo ".env 파일 생성 완료"

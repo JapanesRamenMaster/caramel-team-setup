@@ -26,7 +26,7 @@ if not TOKEN:
                     TOKEN = ln.split("=", 1)[1].strip().strip('"').strip("'")
                     break
 if not TOKEN:
-    print("ERROR: GRAFANA_TOKEN missing. Add to ~/caramel-claude/.env (#claude-setup 채널에서 토큰 확인)", file=sys.stderr)
+    print("ERROR: GRAFANA_TOKEN missing. Add to ~/caramel-claude/.env (맹주성에게 슬랙 DM으로 토큰 확인)", file=sys.stderr)
     sys.exit(2)
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 

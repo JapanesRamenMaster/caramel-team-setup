@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 
 GRAFANA = "https://thetrive.grafana.net"
-TOKEN = os.environ.get("GRAFANA_TOKEN", "")  # .env에서 주입 (토큰은 슬랙 #claude-setup 참고)
+TOKEN = os.environ.get("GRAFANA_TOKEN", "")  # .env에서 주입 (토큰은 맹주성에게 슬랙 DM 문의)
 TEAM_FOLDER_UID = "eefeyl9nunqiof"  # 🔥 팀 대시보드 🔥
 
 CBR_DASHBOARDS = {
