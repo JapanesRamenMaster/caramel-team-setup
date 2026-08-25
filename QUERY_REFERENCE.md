@@ -928,6 +928,9 @@ first_sub_reservations AS (
 - ⚠️ **`reservation_retouch` 링크 부재를 "리터치가 아니다"의 근거로 쓰면 안 된다 (2026-08-06 실측, DS-1830).** 자동 리터치(`source_type='RAIN_RETOUCH'`)만 row를 만들고, **CS 수동 리터치(세차권 지급 후 예약)는 row를 아예 안 만든다** — 어드민 생성 수동 리터치 12건 전부 링크 0. 수동분 판정은 `service_id=136` + `partner_activity_log.description`(`리터치`/`우천 리터치`) + 직전 WASHED 세차 존재로.
 - ⚠️ `zone_rain_log` 테이블은 드롭됨 — `forecast_log`만 사용.
 - 경로: `reservation` → zone(polygon join, COALESCE 패턴 §2e) → `forecast_log`(zone_id + forecast_date)
+- 🔴 **`forecast_log.zone_id`는 "그 존의 날씨"가 아니라 "존 폴리곤 `ST_Centroid` 한 점의 5km 격자 날씨"다 (2026-08-25 실측).** 적재 코드가 `SELECT ST_Y/ST_X(ST_Centroid(z.area)) FROM zone`으로 존당 좌표 1개를 뽑아 기상청 격자(nx,ny)로 변환해 긁는다. 존이 20~290km²라 **세차 1,246건 중 자기 존 중심점과 같은 KMA 5km 격자에 있는 건 25.6%뿐**(Z9 성동/성북 2%·Z1 마포/용산 4%·Z14 용인/화성 0%). ⟹ **"이 고객 동네에 비가 왔나"를 `forecast_log`로 판정하면 74%는 남의 동네 날씨다.** 고객 단위 강수 판정이 필요하면 그 예약 좌표를 직접 격자로 접어 외부 소스(기상청 `getUltraSrtNcst` / Open-Meteo)를 조회할 것. 존 단위 집계(그날 어느 존에 비가 왔나)에만 쓰면 안전하다.
+- ⚠️ **실황 row는 하루 1행 집계라 시간 단위 질문에 못 쓴다 — 시간별 값은 `raw_payload.rows`에 있다.** `precipitation_amount_mm`은 그날 00~23시 RN1 합계고, `weather_condition`은 그중 한 시간이라도 비면 `RAIN`이다. "세차 끝난 뒤에 비가 왔나" 같은 판정은 `raw_payload.rows[]`(`baseTime`·`category` = `RN1`/`PTY`·`obsrValue`)를 파싱해야 한다. 실측: 그날 비 온 세차 495건 중 **29.5%는 세차 종료 후엔 비가 안 왔다**(아침 비 → 오후 세차) — 일 단위로 세면 우천 피해를 3할 과대 집계한다.
+- `reservation_retouch` 컬럼 함정: soft delete가 **`deleted_at`(datetime)** 이다 — 카라멜 표준 `deleted_yn`으로 쓰면 `Unknown column`. status 값은 **`REQUESTED`/`CONFIRMED`/`CANCELED` 3종뿐**(`ASSIGNED` 없음), `parent_reservation_id`가 UNIQUE라 예약 1건당 리터치 1건. 접수 경로는 `metadata.source`(`customer`/`cs-manual`)로 갈린다.
 
 **야외/실내 주차장 필터**
 - 주차장 유형은 `reservation`에 없고 `user_address.parking_lot_type`에 있음.
@@ -1474,6 +1477,7 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - **`customer_vno`**: 고객에게 050 동적 부여. **user_id 단위 키잉(폰번호 아님)** — 한 폰이 여러 app_user면 특정 user_id에만 붙음. 통화↔vno 매칭 구간 = `[assigned_at, COALESCE(cleared_at, expires_at)]`. ⚠️ `ASSIGN_FAILED` 대량(수십 건/일) = 더미폰 유저(01012345678류) 매시 재시도 반복이지 시스템 장애 아님 — `COUNT(DISTINCT user_id)`로 먼저 확인.
 - 🔴 **`customer_vno`에 050 번호 문자열이 없다** — `SELECT vno FROM customer_vno`는 `Unknown column`. 번호는 `vno_pool_id` FK로 **`vno_pool`(id·vno·status)** 을 조인해야 나온다(prod 전수: 번호 문자열 컬럼 `vno`를 가진 테이블은 `vno_pool`·`telephony_call_log`·`detailer` 셋뿐이고, **`detailer.vno`는 폐기된 "디테일러 고정 부여" 설계의 잔재로 전부 NULL**(163/163, 2026-08-21) — 고객 050을 찾다가 여기 조인하면 빈 결과가 난다). 배정 현황 표준형: `FROM customer_vno cv LEFT JOIN vno_pool p ON p.id = cv.vno_pool_id`. 현재 유효 배정 = `cv.status='ASSIGNED'`(과거 시점 커버리지엔 쓰지 말 것 — 현재상태 컬럼이라 회수된 과거 건이 전부 0으로 보인다. 과거는 `assigned_at`/`cleared_at` 구간으로).
 - **크론 실행 기록 = `job_execution`**(`job_id`→`job.name`, telephony 크론 8종). ⚠️ **status='FAILED'여도 장애 단정 금지** — 유저 1명 실패해도 execution 전체가 FAILED로 기록됨. `result` JSON의 `failureCount`/`successCount`를 먼저 볼 것.
+- 🔴 **`job.status='ACTIVE'`는 "돌고 있다"의 근거가 아니다 (2026-08-25 실측).** 테이블명은 **`job`**(`cron_job` 아님). 살아 있는지 판정하려면 두 가지를 같이 봐라: ① `job_execution`의 최종 실행 시각(`MAX(created_at)`), ② 그 job 이름의 핸들러가 코드에 실존하는지(zero-api `cron-internal.controller.ts`의 `@Post('/<jobName>')`). 실사례 — `sendRainRetouchAvailablePush`는 status `ACTIVE`인데 컨트롤러에 엔드포인트가 없고 2026-05-26에 5회 돌고 멈춰 있었다(리터치 알림이 통째로 안 나감), `sendRainPolicyUpdatedNotifications`는 61일 연속 매일 돌다 2026-07-19에 정지.
 
 ---
 
