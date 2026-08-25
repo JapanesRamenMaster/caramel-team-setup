@@ -825,6 +825,12 @@ JOIN entitlement_package_instance epi ON epi.id = epit.package_instance_id
 ```
 커버리지 실측 = service 137의 **1,556장 중 1,553장(99.8%)**. 캠페인 발급분은 `package_key='campaign:{campaignId}:group:{n}'` 형태라 캠페인 id까지 이 컬럼 하나로 나온다(73·74·75=현백 1·3·5회권, 90=캐딜락/GMC).
 
+🔴 **패키지 세차권의 "취소"는 두 종류다 — `entitlement_package_item.status`로 갈라야 장수가 맞는다 (2026-08-24 실측).** `user_service.deleted_yn=1`만 보면 **재발급된 원본과 영구 소멸분이 한 덩어리로 섞인다.**
+- `status='REPLACED'` = 예약 취소로 소멸했으나 **새 `user_service` id로 재발급됨**(`replaced_by_item_id`가 후속 item을 가리킨다). 재발급분이 별도 행으로 이미 살아 있으므로 **매출·선수금 집계에서 빼야 이중계상이 안 된다.**
+- `status='CANCELLED'` = 재발급 없이 **영구 소멸**(환불·bulk-cancel·delete_reason NULL 경유). 이쪽이 진짜 감소분이다.
+- 실측(SERVICE item 1,759장): ACTIVE 1,649 / REPLACED 55 / CANCELLED 55. `deleted_yn=1`은 110장으로 뭉뚱그려진다.
+- 지문: 코드 등록 수 × 회차로 계산한 기대 장수보다 alive가 **모자란 만큼이 곧 CANCELLED**다(현백 campaign 73 −1장·75 −19장이 이 정체였고, EARLY_CANCELLATION 45건은 전부 REPLACED라 장수에 영향 없음).
+
 ⚠️ **"세차권을 어디서 받았나"와 "고객이 반얀 고객인가"를 섞지 말 것.** 전자의 정본은 위 `package_key`이고, 후자를 굳이 유저 단위로 봐야 하면 `app_user.utm_source IN ('반얀트리','banyantree','반얀트리_정기세차')` + `app_user.note LIKE '%반얀%'`이다 — 단 **`utm_source`는 가입 유입경로라 판매처가 아니다**(반얀 지급자 중 `direct`·`lms`·`naver.searchad`·NULL이 9명 실재). **주소(`장충단로 60`)로 세는 것도 금지** — 테스트 계정 11명이 그 주소로 등록돼 있어 섞이고, 실거주지가 성산동·역삼동인 실제 반얀 고객은 빠진다. (⚠️ *예약* 주소 매칭은 또 별개 — `location REGEXP '장충단로 ?60($|[^0-9길])'`, §3d.)
 
 "첫 세차 vs n번째"는 유저별 선행 `WASHED`/`REPORT_SENT` 카운트로 — 하한 없이(§4b-1).
