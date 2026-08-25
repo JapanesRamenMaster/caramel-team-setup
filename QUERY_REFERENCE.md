@@ -97,6 +97,7 @@ WASHED 완료 건만 세는 쿼리엔 실질적 영향 없음. CONFIRMED 포함 
   ```
 - **`reservation_datetime`**: 고객이 예약한 시작 시각(UTC). 실제 완료 시각이 아님.
 - `washed_at`은 `status IN ('WASHED', 'REPORT_SENT')`일 때만 NOT NULL 보장.
+- 🔴 **그 보장이 깨지는 구간이 있다 — 반얀트리 세차는 `washed_at`이 전건 NULL이다 (2026-08-25 실측).** `location REGEXP '장충단로 ?60...'` 건은 **2026-07-20부터** 어드민/작전보드 완료 처리 경로로 바뀌면서 `status='WASHED'`인데 `washed_at`이 안 채워진다: 2026-07 151/169(89.3%) · 2026-08 **215/215(100%)**, 같은 기간 일반 예약은 0.1~0.7%. ⟹ **반얀 세차를 `washed_at` 기준으로 날짜 집계하면 368건이 23건으로 쪼그라들고 "8월 데이터 없음"으로 오판한다.** 반얀(및 어드민 완료 처리 의심 구간)은 `reservation_datetime` 기준으로 셀 것. 0건이 아니라 *줄어든* 형태로 나오므로 눈에 안 띈다.
 - **"예약 시점" 일수 측정** (가입→예약 며칠, 당일 예약 비중 등)은 `created_at`(예약을 *잡은* 시각) 기준. `reservation_datetime`(세차 *예정일*)로 재면 왜곡 — "가입 당일 예약" 71%가 14%로 추락한다.
 
 ### 2d. 차량 조인 (reservation_car 경유)
@@ -560,6 +561,8 @@ pool         = ever_before − returning_in
 → 포인트와 **동일하게 비례배분** 차감: `cancel_alloc = ROUND(cancel_amount × 항목_정가 / 정가합)`.
 실측 과대분: 2026-03 ~194만 / 04 ~91만 / 05 ~143만 / 06 ~314만원. **12개월 누적 약 1,090만원.**
 
+🔴 **`payment.status`에는 철자 2종이 섞여 있다 — `CANCELLED`/`PARTIAL_CANCELLED`(L 두 개) (2026-08-25 실측).** 전 기간 `CANCELLED` 24건·`PARTIAL_CANCELLED` 4건(2025-01~2026-06, 지금도 발생). `IN ('PAID','PARTIAL_CANCELED')`나 `status='CANCELED'`로 쓰면 이 건들이 조용히 반대편으로 샌다(취소분이 매출에 남거나, 취소 집계에서 빠짐). → **`status LIKE 'PA%'`(PAID+PARTIAL_*) 또는 6종 전부 열거**로 방어할 것.
+
 ### 4b-6. 합산 CPA는 채널 믹스가 바뀌면 해석이 없다
 
 광고비는 3채널 합산이 맞지만(§6 참조), **믹스가 급변한 구간에서 합산 CPA를 효율 지표로 읽으면 오독한다.**
@@ -595,6 +598,8 @@ AND (u.phone NOT IN ('01020866510', ...) OR u.phone IS NULL)
 
 기존 문서 일부에 "2025-09부터"로 적혀 있으나 실측은 **2025-09까지 0건, 2025-10부터 전환 시작**(2025-10 혼재, 2025-11 이후 거의 전부).
 → 그 이전 기간의 포인트는 `metadata.$.point` 폴백 필수: `COALESCE((payment_medium POINT SUM), metadata.$.point, 0)`. 안 하면 과거 포인트 차감이 0이 되어 매출이 과대된다.
+
+🔴 **`payment_medium`은 CASH·POINT 행을 항상 쌍으로 만든다 — POINT 행 존재 ≠ 포인트 사용 (2026-08-25 실측).** 2026-05~08 기준 CASH 14,614행 / POINT 14,614행으로 정확히 같고, 그 POINT 중 **11,089행(76%)이 `amount=0`**이다. "포인트 쓴 결제 수"를 `EXISTS(medium='POINT')`로 세면 실제 3,525건이 14,614건으로 **4.1배** 부푼다. → 반드시 `medium='POINT' AND amount>0`. 반대로 **전액 포인트 결제는 CASH 행이 `amount=0`으로 남는다**(2026-05~ PAID 1,110건) — 카드 결제 건수를 CASH 행 존재로 세도 같은 함정.
 
 ### 4b-12. 연도별과 누적을 한 화면에 쓸 때는 필터를 통일하라 (2026-08-04 실측)
 
@@ -768,6 +773,14 @@ WHERE au.deleted_yn = 0 AND au.test_yn = 0 AND au.temp_yn = 0
 WHERE d.name != '이상민' AND d.id != 159
 ```
 
+🔴 **위 3플래그로 안 걸러지는 내부 테스트 계정이 실재한다 — 판매 실적을 19% 부풀렸다 (2026-08-25 실측).** 반얀 패키지 지급자 87명 중 **13명이 내부 테스트 계정인데 `deleted_yn=0 AND test_yn=0 AND temp_yn=0`을 전부 통과**한다. 빼기 전 지급자 수는 10회권 77명·5회권 10명, 뺀 뒤 실판매는 **10회권 69명·5회권 5명**(운영이 아는 숫자와 일치). 지문:
+- `name`에 `테스트`/`test`가 들어감(`맹주성테스트`·`이형준테스트`·`한수용 테스트`·`보희test`·`노준서 테스트`) — 디테일러·기획자 본인 이름이 붙은 계정이 많다.
+- `phone`이 `010000099xx`·`01000001235` 같은 더미, 또는 **같은 번호로 계정 2개**(`01049664316`가 `테스트`·`ㅇㅇㅇ` 2개).
+- 한글 자모 나열(`ㅇㅇㅇ`·`ㅅㄷㄴ`), 그리고 사내 인원 본인 계정(`맹주성` `01020866510` = live_user 블랙리스트 1번 번호, 디테일러 테스터 `성지원`).
+⟹ **매출·판매 실적을 셀 때는 §5b 3플래그로 끝내지 말고 `name`/`phone` 지문 필터를 반드시 덧붙일 것**(블랙리스트 번호 목록은 그 자체로는 이 계정들을 못 덮는다). 반대로 *세차 건수* 집계에는 이 계정들이 거의 안 섞인다(반얀 세차 고객 345명 중 1명) — **지급·결제 쪽에만 몰려 있다.**
+
+⚠️ **패키지 "구매 건수"를 `entitlement_package_instance` 행 수로 세면 10배가 된다.** 1행 = 1회차이므로(§6e) 10회권 1건이 10행이다. 구매 이벤트 단위는 `GROUP BY user_id, package_key, DATE_FORMAT(created_at,'%Y-%m-%d %H:%i')`(같은 사람이 회권을 두 번 살 수 있으므로 분 단위까지)로 묶고, 취소분은 `status='ACTIVE' AND deleted_at IS NULL`로 뺀다.
+
 ### 5c. 유료 예약 판정
 
 **유료 예약** (프로모션 무료 제외): `user_service.paid_yn = 1` + 0원 VOUCHER 프로모션 제외:
@@ -895,6 +908,7 @@ first_sub_reservations AS (
 - **`crmel.link/<key>` 역추적** = `SELECT target_url FROM link WHERE \`key\`='<key>'`. **`target_url`이 상대경로면 단축링크 리졸버가 레거시 호스트(`caramel.thetrive.com`)에 붙여 해석한다** — zero 웹이 아니다. 전체 98,722건 중 절대 URL 93,922 / 상대경로 4,796.
 - **포인트 잔액 = `SELECT SUM(amount) FROM user_point_history WHERE user_id=?`** (잔액 컬럼 없음). 음수면 중복 차감이 실제로 일어난 확정 증거다 — 차감 행은 `payment_id`를 갖고 `reason='commerce checkout point usage'`.
 - ⚠️ **`card_payment`에 행이 없어도 결제가 안 된 게 아니다.** PortOne v2 간편결제 경로는 행을 남기지 않는 경우가 있다. §5d의 "row 없으면 미시도"는 정기결제(빌링키) 청구에 한한 규칙이다.
+- 🔴 **"무슨 수단으로 결제했나"는 한 컬럼에 없다 — 결제 세대별로 3갈래다 (2026-08-25 실측).** ① **신결제(zero/PortOne v2)** = `payment.payment_method`(`CARD`/`EASY_PAY`) + `metadata.$.provider`(`KPN`/`NAVERPAY`/`KAKAOPAY`…). ② **구결제(빌링키 구독)** = `card_payment` → `payment_method`(카드사·마스킹 `card_number`). ③ **아무것도 없음**. `payment.payment_method`는 **NULL이 최다**(6,808/14,677 = 46%, 2026-05~08)라 이 컬럼만으로 수단 분포를 세면 절반이 증발한다. 카드사+뒷4자리까지 나오는 건은 **전체 PAID의 20%뿐**(2,061/10,352): `type='OPTION'`은 `card_payment` 0행, `VOUCHER`는 22%만 행이 있고 `card_number`는 0건, `SUBSCRIPTION`만 36%가 카드번호를 갖는다.
 
 ---
 
