@@ -326,6 +326,11 @@ WHERE r.id=?;
 
 참고: `detailer_supply_sheet.status = '현직'`은 40명, Grafana 기준(위 조건)은 **65명**(2026-08-07 실측, 구 문서값 60명은 stale) — **Grafana 기준 사용할 것**
 
+🔴 **`detailer_supply_sheet`는 dev에 0행이다 — INNER JOIN 하면 dev 결과가 통째로 0이 된다 (2026-08-26 실측).** prod 149행 / **dev 0행**(`detailer_supply_load_log`도 비어 있다 — 구글 시트 동기화가 dev엔 안 돈다). `JOIN detailer_supply_sheet` 로 "현직" 필터를 걸면 dev에서 **에러 없이 0건**이 나오고 "현직 디테일러가 없다"로 오독한다(§0의 dev/prod 괴리 함정과 같은 유형).
+- ⟹ 로스터 필터는 **LEFT JOIN + 명시적 비현직만 제외**: `(ss.status IS NULL OR ss.status='현직')`. 미매칭·미동기화가 조용히 사람을 지우지 않는다. prod 실측: 예약가능 63명 → 비현직 7명 제외 = **56명**(INNER JOIN이면 54명, 미매칭 2명 소실).
+- ⚠️ **prod에만 있는 컬럼이 6개** — `cell_name`·`position`·`region`·`level0_seminar`·`source_sheet_id`·`source_sheet_tab`. dev엔 없어서 `Unknown column`으로 죽는다. **prisma 스키마엔 6개 전부 없으므로 raw query 전용**이고, 코드에서 쓸 때는 컬럼 부재 폴백을 둬야 한다(`prisma-detailer-schedule.repository.ts`의 `findDetailerSupplyRows` 선례).
+- `region`(고정샵 `'오토랩'` 판별)은 **prod 현직 기준 해당자 0명**이라 지금은 필터 효과가 없다 — 없다고 놀라지 말 것.
+
 🔴 **"디테일러 몇 명"은 층이 3개다. 숫자만 쓰면 재현이 안 된다 (2026-08-07 실측).** 같은 날 같은 DB에서:
 
 | 층 | 조건 | 인원 |

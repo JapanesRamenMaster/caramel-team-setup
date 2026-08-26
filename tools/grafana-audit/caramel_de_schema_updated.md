@@ -1161,8 +1161,20 @@ END AS sub_type
 | loaded_at | datetime | NO | 적재일시 |
 | updated_at | datetime | NO | 수정일시 |
 
+**⚠️ prod에만 있는 컬럼 6개** (2026-08-26 실측 — dev엔 없어서 `Unknown column`으로 죽는다):
+
+| 컬럼 | 설명 |
+|------|------|
+| cell_name | 셀(조) 소속 — 셀장 이름. zone과 다른 축 |
+| position | 직위 (셀장 판별) |
+| region | 근무 권역. `'오토랩'` = 고정샵(출장 아님). **prod 현직 해당자 0명** |
+| level0_seminar | 레벨0 세미나 이수 |
+| source_sheet_id / source_sheet_tab | 적재 원본 시트 |
+
 #### 주요 특성 및 주의사항
 
+- 🔴 **dev는 0행이다** (prod 149행, 2026-08-26 실측). `detailer_supply_load_log`도 비어 있다 — 시트 동기화가 dev엔 안 돈다. **`JOIN detailer_supply_sheet`로 "현직"을 필터하면 dev에서 에러 없이 0건**이 나와 "현직 없음"으로 오독한다. 로스터 필터는 `LEFT JOIN` + `(status IS NULL OR status='현직')`로 짤 것.
+- 🔴 **prisma 스키마에 이 테이블의 prod 전용 6컬럼이 없다** → 코드에서는 raw query 전용이고, 컬럼 부재 폴백을 둬야 한다(`prisma-detailer-schedule.repository.ts`의 `findDetailerSupplyRows` 선례).
 - `detailer_id` 컬럼 없음 → `detailer` 테이블과의 매핑 키는 `phone_norm ↔ detailer.phone`
 - **JOIN 시 collation 불일치 주의** (utf8mb4_general_ci vs utf8mb4_0900_ai_ci) → 반드시 `COLLATE` 명시
 
