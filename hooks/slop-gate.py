@@ -12,6 +12,11 @@ MODE="log"   — 탐지만 하고 로그에 적는다(기본). 오탐 목록을 
 MODE="block" — 탐지되면 block 반환해 다시 쓰게 만든다.
 전환은 이 파일 상단 MODE 한 줄만 바꾼다.
 
+[발동 조건] — 2026-08-26 추가
+업무 티키타카에까지 걸려서 짜증난다는 지적. 최근 사용자 메시지 3개에 글쓰기 산출물
+신호(슬랙·노션·공지·메일·문구·초안·윤문 등)가 있을 때만 검사한다. 없으면 그냥 통과.
+발송 훅(slop-gate-outbound.py)은 이 조건이 없다 — 내보내는 행위 자체가 명시적 요청이다.
+
 [동작 흐름]
 1. stdin JSON 파싱 (실패 시 fail-open)
 2. stop_hook_active면 종료 (무한루프 방지)
@@ -41,6 +46,13 @@ MARKERS = [
     "앞서 언급", "정리하자면", "아래 표에 정리", "전문가들은",
     "보여지", "되어지", "여겨지", "에 있어서",
 ]
+# 글쓰기 산출물을 명시적으로 요청한 신호. 표면 이름이나 산문 교정 동사만 넣는다.
+# `문서`, `작성` 같은 넓은 말은 코드 작업 대화에 흔해서 뺐다(오탐이 곧 짜증이다).
+WRITE_INTENT = re.compile(
+    r"슬랙|노션|공지|공유할|공유용|팀에 공유|메일|이메일|문자|알림톡|카피|문구|초안|"
+    r"본문|안내문|보도자료|릴리즈 노트|피드백 써|보고서 써|글 써|글을 써|적어줘|써줘|"
+    r"윤문|퇴고|다듬|교정|고쳐 써|deslop|slop"
+)
 RANGE_TILDE = re.compile(r"\d\s*~\s*\d")          # 노션에서 취소선이 되는 범위 표기
 # 맨 `X가 아니라 Y`는 정상 한국어라 블록 근거가 못 된다(로그 20건 중 12건이 오탐).
 # 판정 가능한 것은 한정어가 붙은 형태뿐 — deslop references/structures.md 예외 목록과 같은 선.
@@ -67,6 +79,27 @@ def last_assistant_text(path):
             if buf:
                 out = "\n".join(buf)   # 마지막 것만 남긴다
     return out
+
+
+def recent_user_text(path, n=3):
+    """마지막 사용자 메시지 n개를 이어붙인다. 발동 조건 판정용."""
+    msgs = []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            msg = rec.get("message") or {}
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                msgs.append(content)
+            elif isinstance(content, list):
+                msgs.append(" ".join(b.get("text", "") for b in content
+                                     if isinstance(b, dict) and b.get("type") == "text"))
+    return "\n".join(msgs[-n:])
 
 
 def strip_quoted(text):
@@ -99,6 +132,15 @@ def main():
         sys.exit(0)
     path = data.get("transcript_path", "")
     if not path or not os.path.exists(path):
+        sys.exit(0)
+
+    try:
+        if not WRITE_INTENT.search(recent_user_text(path)):
+            sys.exit(0)   # 글쓰기 요청이 없었다. 업무 대화는 검사하지 않는다
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"[slop-gate] 발동조건 판정 실패: {e}", file=sys.stderr)
         sys.exit(0)
 
     try:
