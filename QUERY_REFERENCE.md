@@ -11,6 +11,7 @@ caramel-prod DB 분석 쿼리 시 반드시 따를 규칙. `grafana-audit/CLAUDE
 - **테스터 제외** — `deleted_yn=0, test_yn=0, temp_yn=0` (앱 유저 기준). 디테일러는 → §3a
 - **UTC→KST 변환** — DB 전체 UTC 저장. 날짜 집계 전 반드시 변환 → §5a
 - **유령예약 제거** — CONFIRMED 포함 예약 집계 시 `user_service` + `car` 존재 여부 확인 → §2b
+- **디테일러 화면과 고객 화면의 예약이 다르다** — 후불 예약이 고객 앱에서만 숨겨짐(둘 다 실재) → §2b-1
 - **차량/타겟(고가차) 분석** — `reservation`엔 car_id 없음. **`reservation_car` 경유**가 정본 → §2d (⚠️ `user_service.applicable_car_id`는 ~60% NULL 함정). 타겟 판별 = `car_model_target.is_target` → §2d
 - **행 나열 + 합계 함께 제시 시 합계는 SQL로** — 합계·상태별 건수를 답변에서 손으로 세지 말고 `GROUP BY status` 별도 쿼리로 산출해 행 수와 일치하는지 확인 (실사례: 39행 받아놓고 답변에서 35건으로 오기)
 - **dev에서 검증할 때 prod의 `service.id`를 그대로 쓰지 말 것** (2026-08-06 실측) — dev와 prod는 `service.id`가 다르다: prod `137`=`프리미엄 세차 패키지 올클린 케어`인데 **dev `137`=`[B2B] 외부만`**이고, prod `120`(반얀)·`140`(자스민)·`142`는 **dev에 없다**. 이 문서의 id는 **전부 prod 기준**이므로 dev 쿼리·dev E2E 테스트는 `service.name LIKE`로 id를 먼저 되찾아 쓴다. ⚠️틀려도 에러가 안 나고 0건이 나와서 "기능 미동작"으로 오판하게 된다
@@ -88,6 +89,35 @@ WASHED 완료 건만 세는 쿼리엔 실질적 영향 없음. CONFIRMED 포함 
 - **점유**: 재배정 후보를 찾을 때 `그 시각 예약 있음`으로 잡혀 멀쩡한 후보를 탈락시킨다(8/7 실사례 — 안용희170 10:00·한승헌218 16:00이 각각 탈퇴 QA 계정 예약에 막혀 있었고, 청담 10:00 대체 후보 산정이 실제로 왜곡됐다). ⟹ **§3c 후보 탐색 쿼리의 `res` CTE에도 위 3조건(특히 `app_user.deleted_yn=0`)을 걸 것.**
 - **삭제 경로**: `POST /v1/admin/users/{userId}/reservations/bulk-cancel`(zero-api)은 `assertTargetUserExists`가 먼저 걸려 **404 `고객을 찾을 수 없습니다`** 로 거부된다 — 탈퇴 유저라 어드민 화면·API 어느 쪽으로도 손댈 수 없다. **우회 = sales-admin 레거시** `POST https://gateway-prod.thetrive.com/careplus/reservations-admin/{reservationId}/cancel` `{"reason":"CARAMEL_PROBLEM","detailReason":"…"}` (userId를 안 받아 탈퇴 계정도 통과, HTTP 201 → `[{"id":…}]`). `reason` enum = `CUSTOMER_PROBLEM`(→REFUND)·`CARAMEL_PROBLEM`/`RAIN`(→GIVE_BACK_WITHOUT_CHARGE) 3종뿐이고, **테스트/정리성 취소엔 환불이 걸리지 않는 `CARAMEL_PROBLEM`**을 쓸 것.
 - **찾는 쿼리**: `JOIN app_user au ON au.id=r.user_id WHERE au.deleted_yn=1 AND r.deleted_yn=0 AND r.status IN ('CONFIRMED','IN_PROGRESS') AND r.reservation_datetime >= NOW()` — 과거 날짜인데 CONFIRMED로 남은 것도 같이 훑을 것(적재·완료율 분모를 오염시킨다).
+
+### 2b-1. 디테일러엔 보이는데 고객 앱엔 안 보이는 예약 (후불 숨김)
+
+🔴 **`user_service.postpaid_yn=1` 예약은 같은 차에 선불(`postpaid_yn=0`) 대기예약이 하나라도 있으면 고객 앱에서 통째로 숨겨진다 — 날짜를 안 본다 (2026-08-28 실측, caramel-zero origin/main).** 정본 = zero-api `selectVisibleCustomerReservationIds`(`reservation/application/ports/customer-reservation-read.repository.port.ts`), 적용처 = 예약목록·홈(`get-me`)·차고(`get-my-garage`) 3곳. 예약 단위 후불 판정 = 붙은 세차권 중 하나라도 `postpaid_yn=0`이면 선불, 전부 1이면 후불.
+- **디테일러앱·어드민 스케줄엔 이 필터가 없다** (caramel-api `careplus-detailer.service.ts`·`detailer.service.ts`에 postpaid 언급 0건). ⟹ **"디테일러 화면과 고객 화면의 예약이 다르다" CS 문의의 1순위 원인.** 둘 다 실재하는 예약이고 고객만 못 보는 것 — 어느 쪽이 "가짜"냐고 묻지 말 것.
+- **날짜 무관이 핵심 함정**: 9/18에 선불 예약이 하나 있으면 9/1 후불 예약까지 숨는다. 2026-08-28 기준 다음 7일 7건 중 5건은 같은 날 다른 예약이 아예 없어 **고객은 그날 예약이 있다는 사실 자체를 모르고 디테일러만 방문**한다. 규모: 미래 숨김 1,691건 / 720명.
+- ⚠️ **고객 앱의 "유효 세차권" 필터는 `deleted_yn=0` 하나가 아니라 `deleted_yn=0 AND paid_yn=1 AND used_yn=1` 셋이다** (zero `customer-reservation.where.ts` `validReservationVisibilityWhere`). §2b의 집계용 유령 필터보다 좁다 — "고객 화면에 뜨는가"를 재현할 땐 셋 다 걸 것.
+- **숨겨진 예약 찾는 쿼리** (고객 앱 로직 재현):
+```sql
+WITH valid AS (   -- 고객 앱이 후보로 삼는 집합
+  SELECT r.id, r.user_id, r.reservation_datetime, MIN(us.postpaid_yn) minp
+  FROM reservation r
+  JOIN app_user u ON u.id = r.user_id AND u.deleted_yn = 0
+  JOIN user_service us ON us.reservation_id = r.id
+    AND us.deleted_yn = 0 AND us.paid_yn = 1 AND us.used_yn = 1
+  WHERE r.deleted_yn = 0 AND r.status IN ('CONFIRMED','IN_PROGRESS')
+    AND EXISTS (SELECT 1 FROM reservation_car rc JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
+                WHERE rc.reservation_id = r.id)
+  GROUP BY r.id, r.user_id, r.reservation_datetime
+), rcv AS (
+  SELECT rc.reservation_id, rc.car_id FROM reservation_car rc
+  JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
+), prepaid_cars AS (
+  SELECT DISTINCT rcv.car_id FROM valid v JOIN rcv ON rcv.reservation_id = v.id WHERE v.minp = 0
+)
+SELECT DISTINCT v.id            -- 디테일러에겐 보이고 고객에겐 안 보이는 예약
+FROM valid v JOIN rcv ON rcv.reservation_id = v.id
+WHERE v.minp = 1 AND rcv.car_id IN (SELECT car_id FROM prepaid_cars);
+```
 
 ### 2c. 완료 시각 vs 예약 시각 (washed_at vs reservation_datetime)
 
@@ -818,6 +848,8 @@ AND r.id NOT IN (
 
 **취소 시 세차권 "반환" = 새 row 재발급 (2026-07-19 실측)**: 예약 취소(어드민 bulk-cancel `ticketAction=GIVE_BACK` 등)로 세차권이 반환되면 기존 `user_service` row의 `used_yn`을 0으로 되돌리는 게 아니라 ① 기존 row는 `used_yn=1`·`deleted_yn=1`로 soft-delete되고 `reservation_id` 연결이 그대로 남으며 ② 동일 `service_id`의 새 미사용 row(`used_yn=0`, `reservation_id=NULL`)가 새로 생성됨. ⟹ row 수를 발급 수로 세면 이중계산, `deleted_yn=1`을 "소실"로 세면 오판(반환분은 새 row로 살아 있음).
 
+**🔴 재발급 대체행은 원래 배치의 `partner_activity_log_id`를 그대로 물려받는다 — 발급 배치 크기를 `created_at` 날짜로 세면 과소집계된다 (2026-08-28 실측)**: 위 GIVE_BACK 재발급으로 생기는 새 row는 발급일이 **몇 달 뒤**인데 `partner_activity_log_id`는 원 배치 값을 유지한다. 실측(user 131331, 반얀 10회권): `created_at`이 1/25인 행은 8장인데 `partner_activity_log_id=576`으로 묶으면 9장(4/8자 대체행 1장 포함)이라 **운영자가 말하는 "그때 9장 발급"과 DB가 어긋나 보인다.** ⟹ "이 뭉치가 어느 판매에서 나왔나"·"몇 장 발급했나"는 `created_at`이 아니라 `partner_activity_log_id`로 묶을 것.
+
 **🔴 "고객이 가진 세차권 N장" = 미사용 + 미래예약에 물린 것 (2026-07-31 실측)**: CS 문의("몇 장 남았냐", "유효기간 연장해달라")에 `used_yn=0`만 세면 **틀린다.** 구독 고객은 자동예약 배치가 미래 예약을 미리 잡으면서 세차권을 `used_yn=1`로 선점해두기 때문에, 미사용 row가 0장인데 고객은 "7장 남았다"고 말하는 상황이 정상적으로 발생한다. 그 예약을 취소하면 위 GIVE_BACK 경로로 새 미사용 row가 나오므로 고객 인식이 맞다.
 ```sql
 -- 고객 보유 세차권 (실질)
@@ -1422,6 +1454,10 @@ BEFORE/AFTER 섹션 종류:
 - ⚠️ "세차 횟수" 요청 시 기준이 명시 안 되면 고객 총 세차(user_id 기준)가 기본. 차량 단위 요청엔 `reservation_car` 경유 필요.
 - 완료 상태 필터: `status IN ('WASHED', 'REPORT_SENT')` (REPORT_SENT도 세차 완료로 처리됨)
 
+🔴 **한 사람의 세차가 여러 `user_id`·여러 `car.id`로 갈린다 — user_id로 세도 car_id로 세도 과소 카운트다 (2026-08-27 실측).** `01047046662`: 실고객 계정 2개(`7263` 본계정 / `102709` 이름이 전화 뒷자리 `6662`, 2025-08 가입)에 카니발 `214오3008`도 car 행 2개(`76147`@7263 / `73300`@102709). 실제 완료 세차는 4회인데 car 76147 기준 1회·계정 7263 기준 3회로 화면마다 달라 CS 문의가 났다(2025-08 첫 세차가 옛 계정에 있어 양쪽 다 안 보임).
+- ⟹ **고객 1명 이력 조회는 `phone`으로 계정을 먼저 모으고**(`REPLACE(phone,'-','')='...'`), 차량은 `car.id`가 아니라 `plate_number`로 묶는다.
+- ⚠️ 이런 중복 계정은 `test_yn`/`temp_yn`으로 안 걸러진다(둘 다 정상 고객 계정). 반대로 이름이 전화 뒷자리·자모인 계정을 §5b 지문 필터로 테스트로 지우기 전에 **세차 이력이 있는지 먼저 볼 것** — 실고객일 수 있다.
+
 **`reservation.key_direct_handover_yn`**
 - "세차 당일 다른 사람이 키를 전달할거예요" 체크박스. TinyInt: 1=대리 전달, 0=본인 직접, null=미설정(구버전).
 
@@ -1483,6 +1519,8 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - ⚠️ **`sent_yn` 함정**: **ALIMTALK은 발송돼도 `sent_yn=0`·`status='REQUESTED'` 고정**(PUSH만 `sent_yn=1`). `sent_yn=1`로 필터하면 알림톡이 통째 누락된다. **행 존재 = 발송요청**으로 집계(도달 확정 아님 — BizM 도달 콜백 미반영).
 - 🔴 **단, 위 `sent_yn` 함정은 레거시 CRM 경로 한정이다 — zero-api signal 경로에는 정반대로 적용된다 (2026-08-10 실측).** 두 경로는 **`tracking_key` 모양**으로 갈린다: **semantic key**(`wash-start-91024`·`wash-complete-{id}`·`reservation-info-detailer-{id}`·`reservation-cancel-{id}`) = zero-api signal / **랜덤 8자**(`02c2XFru`)·NULL = 레거시 CRM. signal 경로는 `sent_yn=1`+`status='success'`가 정상이고 **`sent_yn`이 실제 성공 여부를 담는다** (최근 30일 semantic key ALIMTALK: success 19,063 / **fail 465는 `sent_yn=0`**). ⟹ **signal 경로에 "행 존재 = 발송"을 쓰면 실패분까지 발송으로 센다.** 경로를 먼저 가르고 술어를 고를 것. (실사용: 세차 시작 알림 `wash-start-*` 2,462건은 100% `sent_yn=1`+`success`.)
 - ⚠️ **`message`에 `message_group`·`group_name` 컬럼은 없다** — 템플릿 구분은 `type`(`washStart003`·`washCompleted006` 등). 쓰면 `Unknown column`.
+- 🔴 **`type` 키에 두 세대가 있고 **동시에 살아 있다** — 한쪽만 세면 같은 알림을 몇 배 적게 센다 (2026-08-29 실측).** `UPPER_SNAKE`(464키·763,559행, 최종 2026-08-29)와 `camelCase`(82키·10,799행, 최종 2026-08-27)가 둘 다 지금 기록 중이다. 같은 알림이 두 키로 나뉜 실례: 디테일러 예약정보 `RESERVATION_INFO_DETAILER`(59,128·2024-09~) + `reservationInfoToDetailer001`(15,515·2026-05~) — **둘 다 8/29까지 기록**된다. 반대로 **교체된** 짝도 있다: 주차 리마인더 `PARKING_INFO_REMINDER`(2025-08-21 종료) → `parkingInfo_reminder001`(현행). ⟹ **`type = '<하나>'`로 발송량을 세지 말 것.** `type IN (...)` 로 두 표기를 함께 넣거나 `type REGEXP` 로 잡는다. 어느 패턴인지(공존/교체)는 짝마다 다르니 **`GROUP BY type` + `MIN/MAX(created_at)` 로 먼저 확인**한다.
+- ⚠️ **발송 여부를 `message` **본문** LIKE 로 세지 말 것 — false 0 이 나온다.** 본문은 `request.msg`/`request.content` 2종에 채널별로 한쪽이 NULL이라(아래 항목) `WHERE message LIKE '%문구%'`가 통째로 0을 돌려준다. 실사례(2026-08-29): 반얀 주차 리마인더를 `message LIKE '%주차 위치%'`로 세어 "60일간 0건"이라 결론냈다가, `type IN ('parkingInfo_reminder001','PARKING_INFO_REMINDER')`로 다시 세니 **172건**이었다. **발송량은 항상 `type`으로 센다.**
 - 채널은 `type`별로 대체로 고정(윈백·구독갱신·자동예약=ALIMTALK, 쿠폰만료는 알림톡/푸시가 별도 `type`).
 - 🔴 **`reservation_id`는 대체로 NULL이다 — 예약 통지 이력을 `reservation_id`로 찾으면 "안 나갔다"는 오답이 나온다** (2026-07-26 실측: 당일 `reservationUpcoming003` **216건 전부 NULL**). **예약 통지 조회 = `WHERE customer_id = :app_user_id AND created_at >= :당일`** 로. `reservation_id`가 채워지는 type도 일부 있으니(`RESERVATION_INFO_DETAILER` 등) 둘 다 확인.
   - 🔴 **zero-api signal 경로는 `tracking_key = '<이벤트>-<reservationId>'`가 정본 조회 경로다 (2026-08-10 실측).** 여기도 `reservation_id`는 NULL이다(`wash-start-91024`·`wash-start-91543` 둘 다). 위 `customer_id` 방식은 레거시용이고, signal 경로는 tracking_key가 **고객 단위가 아니라 예약 단위로 바로 잡혀** 훨씬 정확하다. 예: `WHERE tracking_key = CONCAT('wash-start-', r.id) AND sent_yn = 1`. 코드측 생성기는 caramel-zero `reservation-notification.port.ts`의 `buildWashStartTrackingKey` 등.
@@ -1605,11 +1643,15 @@ WHERE cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르�
 | subscription_id | int | **98% NULL — 구독 여부 판단에 사용 불가** |
 | location | text | 주소 문자열 |
 | detailed_location | text | 상세 주소 (동/호수) |
-| parking_info_content | text | 주차 안내 메모 |
+| parking_info_content | text | 주차 안내 메모. 🔴 **알림 차단 스위치로도 쓰인다** — 30분전 "주차 위치를 알려주세요" 크론이 `parking_info_content IS NULL` 인 예약만 집으므로, 값이 있으면 그 알림이 안 나간다 → 아래 |
 | deleted_yn | tinyint | 0=정상 |
 | allow_shuffle_yn | tinyint | 1=셔플 크론 리배정 허용 / **0=콘솔 "고정"(유저단위 `pinNoShuffle`). 담당자 지정 아님·수동 재배정은 가능** → §3c |
 | note | text | **디테일러앱 현재 예약 상세 "메모" 블록에 보이는 내부 지시란**(고객 미노출). 판매 약속·동반 방문 등은 여기 써야 담당자가 본다 |
 | detailer_note | text | 디테일러가 세차 완료 시 쓰는 칸. **다음 방문 이력 탭에만 렌더** → 이번 예약 지시로 쓰면 안 보인다 |
+
+- 🔴 **현장(반얀·천호) 예약이 "주차 위치를 알려주세요" 알림을 안 받는 기전은 크론 필터가 아니라 `parking_info_content = '자유'` 선채움이다 (2026-08-29 실측).** 예약 **생성 코드**가 반얀 주소면 이 값을 미리 박는다(`prisma-reservation-facts.repository.ts`). 30분전 크론은 `parking_info_content IS NULL` + `user_address.parking_location_content IS NULL` 만 집으므로 자동으로 빠진다. ⟹ **크론 코드만 읽고 "현장 제외가 없다"고 결론내면 오답이다** — 실제로 그렇게 잘못 답한 적이 있다.
+  - ⚠️ **선채움은 생성 경로에 의존해서 샌다.** `reserved_with_date=0` 으로 만들어진 예약엔 안 붙는다. 2026-08-29 기준 미래 반얀 예약 **4건**이 조건에 걸렸고 그중 **3건은 푸시 토큰까지 있었다.** 현장 알림 차단 여부를 볼 때 "코드에 분기가 있으니 괜찮다"로 넘기지 말고 **위 두 컬럼으로 실제 대상 건수를 세라.**
+  - 정본 스위치는 `field_site.flags.skipReminder` 로 옮겼다(zero PR, 2026-08-29). 이건 생성 경로와 무관하게 크론에서 막는다.
 
 🔴 **`note`/`detailer_note` 쓰기 경로 = DB UPDATE만이 아니다 (2026-08-06 실측).** sales-admin `PATCH https://gateway-prod.thetrive.com/careplus/reservations-admin/{id}` 가 `note`·`detailerNote`·`complaintYn`·`complaintReason`·`overtimeExpectedReason`를 받는다(`UpdateReservationAdminDto`, `'note' in dto` 방식이라 **보낸 키만** 갱신 → 다른 필드 안전). 알림 부작용 없음. ⟹ **prod DB 직접 UPDATE 하지 말고 이 PATCH를 쓸 것.** 단 이 API는 **덮어쓰기**이므로 기존 값이 있으면 먼저 SELECT해서 이어붙인 전문을 보낼 것.
 
@@ -1743,7 +1785,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 | user_id | int | FK → app_user.id |
 | service_id | int | FK → service.id |
 | deleted_yn | tinyint(1) | 0=정상 |
-| postpaid_yn | tinyint(1) | 0=선불, 1=후불(레거시: 선불권 소진 시 자동생성 후불권) **⚠️ 온보딩 '후불 결제(현장수금)' 예약은 postpaid_yn=0으로 생성됨 — 후불 판별에 이 컬럼 단독 사용 금지, `reservation_onsite_collection` 참조** |
+| postpaid_yn | tinyint(1) | 0=선불, 1=후불(레거시: 선불권 소진 시 자동생성 후불권) **⚠️ 온보딩 '후불 결제(현장수금)' 예약은 postpaid_yn=0으로 생성됨 — 후불 판별에 이 컬럼 단독 사용 금지, `reservation_onsite_collection` 참조** / 🔴 `postpaid_yn=1` 예약은 고객 앱에서 숨겨질 수 있다 → §2b-1 |
 | applicable_car_id | int | 차량 FK **⚠️ 15%만 채워짐 — 차량 조인 부적합** |
 | ended_at | datetime | 세차권 만료일 **⚠️ 무한대 sentinel이 여러 값으로 혼재 — 아래 참조** |
 | delete_reason | varchar | 삭제 사유. 실값 `'삭제 후 새로운 세차권 부여'`(예약취소 반환 재발급) · `'후불 세차권 상계처리 (<us_id>)'`(갱신 상계, 괄호 안이 상계 대상 id) · `'ADMIN_BULK_CANCEL'` · `'B2B_CONSOLE_TICKET_REVOKE'`(zero `revokeUnusedAdminUserTickets` = 콘솔 미사용권 회수 API). **재발급분과 상계 소멸분을 가르는 유일한 단서** — 이 값 없이 `deleted_yn=1`만 보면 "취소로 반환된 권"과 "상계로 사라진 권"이 같아 보인다. 🔴 **`NULL`인 채 초 단위 간격으로 한 행씩 지워져 있으면 정식 회수 API가 아니라 운영자가 화면에서 손으로 지운 것** — 이 경로는 `entitlement_package_instance`를 `CANCELLED`로 안 바꿔서 유령 패키지가 `ACTIVE`로 남는다(2026-08-07 반얀 5회권→10회권 교체 실측: 세차권 5 + 옵션 10을 15:45:48~15:46:24에 2초 간격 개별 삭제, instance 5행은 ACTIVE 잔존) |
