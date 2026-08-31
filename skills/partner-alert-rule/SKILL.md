@@ -64,7 +64,7 @@ API로 할 때는 `caramel-admin-api` 스킬의 `PATCH /v1/admin/users/{userId}`
 
 ```ts
 {
-  channels: PARTNER_ALERT_CHANNELS,          // 또는 PREMIUM_VOUCHER_ALERT_CHANNELS
+  channels: PARTNER_ALERT_CHANNELS,          // 전 규칙이 같은 채널을 쓴다
   couponNamePatterns: ['신세계'],
   label: '신세계',                            // 슬랙 카드 헤더에 그대로 찍힌다
   mentionIds: PARTNER_VIP_OPS_MENTION_IDS,
@@ -102,10 +102,12 @@ API로 할 때는 `caramel-admin-api` 스킬의 `PATCH /v1/admin/users/{userId}`
 
 ### 기존 채널 상수
 
+2026-08-31 이후 제휴·VIP 카드는 규칙과 무관하게 한 채널로만 간다. 반얀트리·프리미엄 세차권만
+디테일러 방·마케팅 방으로 따로 가던 것을 합치면서 `PREMIUM_VOUCHER_ALERT_CHANNELS`는 사라졌다.
+
 | 상수 | 실제 채널 |
 |---|---|
-| `PARTNER_ALERT_CHANNELS` | `C079ACSCG93` (제휴·VIP 알림방) |
-| `PREMIUM_VOUCHER_ALERT_CHANNELS` | `caramel_detailers` + `caramel_marketing` |
+| `PARTNER_ALERT_CHANNELS` | `C0BTM7NRUS1` (#caramel_vip_알림) |
 | `PARTNER_VIP_OPS_MENTION_IDS` | 이보희·`U079D626ZAP`·이현복·전승엽 |
 
 배정된 디테일러의 `slack_member_id`가 있으면 멘션 맨 앞에 자동으로 붙는다.
@@ -173,7 +175,7 @@ kubectl logs -n dev "$POD" --since=10m | grep -E "<RID>|Failed to send Slack"
 
 ### ⚠️ dev에도 발송 억제가 없다
 
-- 슬랙: `.env.dev`에 `SLACK_BOT_TOKEN`이 있고 dev 분기가 없다 → **실채널로 발송**된다(카드 제목에 `(DEV)`만 붙음). `caramel_detailers`·`caramel_marketing`을 쓰는 케이스는 사전 공지하거나 짧게 몰아서 끝낸다.
+- 슬랙: `.env.dev`에 `SLACK_BOT_TOKEN`이 있고 dev 분기가 없다 → **실채널로 발송**된다(카드 제목에 `(DEV)`만 붙음). 제휴·VIP 카드는 전부 `C0BTM7NRUS1`(#caramel_vip_알림)에 뜬다. 테스트 발송은 사전 공지하거나 짧게 몰아서 끝낸다.
 - 문자·알림톡: 시그널 어댑터(bizm·naver-sens·expo-push)도 dev 억제가 없다 → **20시 크론 엔드포인트(`POST /v1/internal/cron/dailyDetailerSchedule`)를 그냥 누르면 실제 디테일러에게 발송된다.** 누르지 말고 조회 조건을 SQL로 재현해 검증한다:
 
 ```sql

@@ -760,6 +760,7 @@ WHERE us.reservation_id IS NULL OR r.id IS NULL
 
 - 실측 격차: 2026-03-31 잔액이 `used_yn=0`으로는 6,660장, 시점 판정으로는 **10,652장 — 37% 과소**.
 - **금액은 `service.price`(정가)로 환산할 것.** `user_service.paid_amount`는 2026-05분부터만 채워져 추이를 못 만든다(위 `user_service` 치트시트). 정가 기준이라 실수령액보다 크다는 단서를 반드시 병기.
+  - 🔴 **커버리지 실측(2026-08-30, `deleted_yn=0` 전수): 2024년 0/5,456 · 2025년 0/28,805 · 2026년 7,750/40,083 = 19.3%.** 즉 2026년 안에서도 5건 중 1건만 값이 있다. **`paid_amount > 0`으로 "유료 전환했나"를 판정하면 과거 코호트가 통째로 미전환으로 잡힌다** — 실사고: 선물 수령자 174명의 유료 전환을 이 컬럼으로 재서 **27.0%를 2.3%로 오판**했다. 정답 경로는 `payment`(`deleted_yn=0 AND status='PAID' AND amount>0`)를 유저·시점으로 조인하는 것.
 - **발급 경로를 갈라야 해석이 된다** — `promotion_application_id`/`coupon_code_reward_id`/`coupon_campaign_reward_id` 중 하나라도 있으면 무상권, 아니면 `payment_id` 유무로 '결제로 발급' vs '어드민 지급'. 실측(2026-06-30): 결제 발급 4.90억 / 어드민 지급 1.33억 / 무상 0.15억 — 무상권을 섞으면 "선수금 증가"가 부풀려진다.
 
 ### 4b-15. 세차 객단가 = 정의부터 맞춰라. 그리고 상승 원인은 **정가 vs 실현율**로 갈라야 한다 (2026-08-05 실측)
@@ -969,6 +970,25 @@ first_sub_reservations AS (
 - ⚠️ **`card_payment`에 행이 없어도 결제가 안 된 게 아니다.** PortOne v2 간편결제 경로는 행을 남기지 않는 경우가 있다. §5d의 "row 없으면 미시도"는 정기결제(빌링키) 청구에 한한 규칙이다.
 - 🔴 **"무슨 수단으로 결제했나"는 한 컬럼에 없다 — 결제 세대별로 3갈래다 (2026-08-25 실측).** ① **신결제(zero/PortOne v2)** = `payment.payment_method`(`CARD`/`EASY_PAY`) + `metadata.$.provider`(`KPN`/`NAVERPAY`/`KAKAOPAY`…). ② **구결제(빌링키 구독)** = `card_payment` → `payment_method`(카드사·마스킹 `card_number`). ③ **아무것도 없음**. `payment.payment_method`는 **NULL이 최다**(6,808/14,677 = 46%, 2026-05~08)라 이 컬럼만으로 수단 분포를 세면 절반이 증발한다. 카드사+뒷4자리까지 나오는 건은 **전체 PAID의 20%뿐**(2,061/10,352): `type='OPTION'`은 `card_payment` 0행, `VOUCHER`는 22%만 행이 있고 `card_number`는 0건, `SUBSCRIPTION`만 36%가 카드번호를 갖는다.
 
+### 5f. 🔴 고객이 결제 퍼널에서 고른 방문시각은 `reservation_draft`에만 남는다 — 예약이 됐다는 뜻이 아니다 (2026-08-31 실측)
+
+`payment`에는 "고객이 몇 시를 골랐나"가 없다. 그 값은 `reservation_draft`에 있고, **FK가 아니라 카트 metadata의 JSON 문자열로 이어져 있다.**
+
+```sql
+FROM payment p
+JOIN cart c ON c.id = p.cart_id
+JOIN reservation_draft d
+  ON d.uuid = JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.draftUuid'))
+```
+`reservation_draft`: `user_id`·`car_id`·`address_id`·`reservation_datetime`·`last_step_key`(`address`→`visit-time`→`precaution`→`payment`).
+
+- 🔴 **`payment.type='PACKAGE'`는 예약을 만들지 않는다.** 정산(`checkout-settlement`)이 `product.type='PACKAGE'`면 예약 생성 레시피를 비운다. 그래서 패키지 결제에 딸린 draft의 `reservation_datetime`은 **고객이 골랐지만 버려진 값**이다. 그 시각에 예약이 있다면 **고객이 결제 뒤 같은 시각을 한 번 더 고른 것**이지 결제가 만든 게 아니다 — 2026-08-31 실측 21건 중 14건이 결제 **73~485초 뒤** `source_type='CUSTOMER_DIRECT'`로 재예약했고 7건은 안 했다. 결제→예약 인과로 읽으면 오답. (화면은 2026-08-31에 고쳤다 — 패키지는 이제 예약 퍼널을 안 태운다.)
+- **draft가 예약이 됐는지 알려주는 컬럼은 없다.** `reservation`을 `(user_id, reservation_datetime)`으로 대조하는 근사뿐이고, 고객이 나중에 같은 시각을 따로 잡으면 위양성이 난다.
+- ⚠️ **`payment.cart_id`는 NULL이 흔하다**(어드민 지급·레거시 경로). 카트 경유 분석은 실질적으로 zero 웹/앱 결제만 본다.
+- `cart.metadata.$.source`로 어느 화면에서 들어왔는지 갈린다: `wash-catalog`(세차권 구매 화면), `reservation-funnel`(예약 퍼널).
+
+**컬럼명 함정 2개**: `payment`엔 `total_amount`가 없다(=`amount`). `product_post_purchase_behavior`는 `type`/`value`가 아니라 **`behavior_type`/`behavior_config`**(예: `LANDING` + `{"page":"/my-garage"}`).
+
 ---
 
 ## 6. 도메인별 심화
@@ -1107,6 +1127,8 @@ first_sub_reservations AS (
 - rule 윈도우 매칭 정석: `ru.day_of_week = UPPER(DATE_FORMAT(CONVERT_TZ(r.reservation_datetime,'+00:00','+09:00'),'%a'))` (**KST 요일** 기준) + `TIME(CONVERT_TZ(r.reservation_datetime,...,'+09:00')) >= TIME(DATE_ADD(ru.start_time, INTERVAL 9 HOUR)) AND ... < TIME(DATE_ADD(ru.end_time, INTERVAL 9 HOUR))` (end 배타적). `ru.deleted_at IS NULL` 포함. 스케줄은 `effective_from <= r.reservation_datetime < effective_to`.
 - ⚠️ **재배정 API는 근무윈도우 밖 배정도 통과시킬 수 있다** (실증 2026-07-19: 08~17 근무자에게 18시 예약 배정 성공 — 이한결 사례). "시스템이 막아줬겠지" 가정 금지 — 대량 재배정 후엔 위 감사 필수.
 - ⚠️ **`detailer_holiday`에 `from`=`to`인 '무력화' row 실존** (blanket 휴무 해제 시 삭제 대신 from=to로 눌러두는 관례, 2026-07-18 반얀 파견 해제). from/to range 겹침 판정에선 자동 배제되지만, row 존재/COUNT 기반 "휴무 있음" 판정은 오판 → **`from <> to` 필터** 필수.
+- 🔴 **휴무 겹침 ≠ 충돌 — 운영이 `detailer_holiday`를 "전담 잠금"으로도 쓴다 (2026-08-30 실측).** memo `종일 비활성화 - <고객> N건 전용` 패턴은 그 디테일러를 **그 예약들에만** 붙이려고 하루를 통째로 막아둔 것이라, 그 안의 예약은 의도된 배정이고 충돌이 아니다(최우석143 · 2026-09-04 · 정영환 4건). ⟹ 휴무 겹침을 기계로 판정할 땐 **`memo`를 같이 뽑아 볼 것.** 단 같은 블록에 **전용 대상이 아닌 예약이 섞여 있으면 그건 진짜 충돌**이다(같은 날 권샛별 18:00 1건 실존) — 오탐이라고 블록 통째로 버리지 말고 고객으로 갈라야 한다.
+- ⚠️ **`detailer_holiday`엔 soft-delete 컬럼이 없다 — 하드 삭제다.** 과거 알림·리포트가 왜 그 판정을 냈는지 되짚을 때 그 시점의 휴무 row가 이미 사라져 있을 수 있다(운영이 날짜를 옮길 때 DELETE 후 재INSERT). 흔적은 **id 공백**뿐 — `SELECT a.id+1 gap_start, MIN(b.id)-1 gap_end FROM detailer_holiday a JOIN detailer_holiday b ON b.id>a.id WHERE a.id BETWEEN ? AND ? GROUP BY a.id HAVING gap_start<=gap_end`. **"지금 DB에 없으니 그때도 없었다"로 결론내지 말 것.**
 
 **재배정을 직접 실행할 때 — 대상 사전검증 필수 (2026-07-24)**
 - 재배정 API(sales-admin `PUT /careplus/reservations-admin/{id}/schedule`, zero-api admin `PATCH`)는 대상 디테일러의 **근무시간·휴무·현직/퇴사를 전혀 검증 안 함** (`checkScheduleConflict`=같은 디테일러 동일시각 겹침만, `skipConflictCheckYn=true`면 그마저 스킵). 검증은 고객 슬롯조회 경로(`findActiveDetailers`)에만 있음 → **API 성공 ≠ 실제 가용.**
@@ -1436,6 +1458,15 @@ BEFORE/AFTER 섹션 종류:
 - 🔴 **제휴처 모수는 `campaign_id` 하드코딩 대신 `coupon_campaign.partner_name` 전수로 (2026-08-12 실측).** 같은 제휴처가 코드 소진 후 **동명 후속 캠페인을 새로 발행**한다: jyc = 56·57 `[jyc] 첫 세차 프리미엄 패키지`(2026-03-04) → **62·63 `..._2`(2026-05-04)**. campaign_id를 박아둔 추적기·시트는 **신규 캠페인을 조용히 통째로 놓친다** — 실사례: JYC 추적 GAS가 56·57만 봐서 _2 등록자 61명 중 **57명 누락(그중 30명은 이미 세차 완료)**, 전 기간 세차완료자가 113명으로 보였으나 실제 145명(32/145 = 22% 과소). 판정 = `JOIN coupon_campaign cpn ON cpn.id = cc.campaign_id AND cpn.partner_name = '<제휴처>'`. ⚠️ 위 현대백화점 N회권 분할(73/74/75)과는 **다른 축** — 그건 회권별 동시 분할, 이건 시간순 재발행이다.
 - 리텐션/매출은 `user_service.paid_amount`와 `payment`(status='PAID') 양쪽으로 교차검증. 무료세차 당일 결제는 현장 옵션 업셀 — `payment.paid_at > 무료세차 washed_at`로 진짜 재방문만 분리.
 - **쉘 계정 어뷰징**: 무료 쿠폰 코호트엔 `app_user.phone IS NULL` + 랜덤 이름(`name REGEXP '^[A-Za-z0-9]{6,8}$'`) + 예약 0건인 가짜 계정이 섞임. 실사용자 모수는 **`phone IS NOT NULL`** 필터.
+
+### 6f. 고객 간 선물(`user_gift_service`) — `deleted_yn` 의미가 뒤집혀 있다 (2026-08-30 실측)
+
+세차권을 다른 고객에게 넘기는 경로. `from_user_id` → `to_user_id`, 넘기는 대상은 `user_service_id`, 공유 링크 키는 `uuid`, `message`는 선물 메시지(21%만 채움).
+
+- 🔴 **`deleted_yn=1`은 삭제가 아니라 수령 완료 마킹이다.** 표준대로 `deleted_yn=0`을 걸면 **수령분 195건이 통째로 사라져 수령률이 0%로 나온다.** 교차표 실측: `deleted=1 & to_user_id 있음`=195(수령 완료) / `deleted=1 & to_user_id 없음`=108(발신자 취소·만료) / `deleted=0 & to_user_id 없음`=93(수령 대기). **`deleted_yn=0 & to_user_id 있음`은 0건** — 즉 수령되면 반드시 1이 된다.
+- 🔴 **`received_at` 컬럼은 존재하지만 396행 전부 NULL이다.** 이름만 보고 수령 판정에 쓰면 0건. **수령 판정 = `to_user_id IS NOT NULL`**.
+- ⚠️ **발신자 집계는 전화번호로 묶어라.** `from_user_id` GROUP BY 하면 한 사람의 복수 계정이 갈라진다(§app_user 중복). 실측에서 상위 발신자 2명이 5개 계정으로 쪼개져 있었고, 내부 임직원 6계정이 396건 중 203건(51%)이라 **안 빼면 "발신자당 몇 장" 류 지표가 통째로 왜곡**된다.
+- 실측(2024-07-22~2026-03-30, 396건): 수령 195/396 = 49.2%, 수령자 174명. **2026-04 이후 발행 0건** — 레거시 웹(`references/legacy/careplus-web/app/gift`)에만 있고 zero로 이관되지 않았다.
   - 어뷰징 점검: `user_address.address`+`detail_address`로 세대 묶기, 같은 주소 생성 버스트 탐지, `app_user.dealer_id`/`created_by`로 딜러 경유 확인, `app_user.phone`과 `detailer.phone` 대조(디테일러 셀프-어뷰징).
 - ⚠️ **프로모션 "종료" 판단 함정**: 로그인 게이트(`/careplus/auth/promotion/*`)가 막혔다고 쿠폰까지 막힌 게 아니다. `POST /careplus/coupon/apply`는 프로모션 상태와 무관한 앱 공용 엔드포인트로, 검증은 `coupon_code.expired_at`/`max_usage_count`만 본다. "프로모션 막혔나요?" 질문엔 로그인 엔드포인트뿐 아니라 **해당 쿠폰의 `expired_at`도 같이 확인** 필수 — 안 그러면 로그인 게이트만 막고 코드 자체는 방치돼 계속 재적용 가능한 뒷문이 남는다(KCC·토스 사례 반복).
 - ⚠️ **`coupon_code.name` LIKE 검색 시 코드 모델 착각 주의**: 같은 `name`으로 캠페인당 **1개 공유코드**(KCC `voucher_kcc`)인 경우와 **유저당 1개씩 개별 발급**(토스 "토스 유저 쿠폰", 5만 row)인 경우가 섞여 있다. `SELECT * WHERE name LIKE '%키워드%'`로 순진하게 조회하면 후자는 row가 수만 개 쏟아진다 — 먼저 `COUNT(*) GROUP BY name`으로 코드 개수 모델부터 확인. 미사용 코드 수 계산 시 `coupon_code_usage`는 `COUNT(*)`(usage row)와 `COUNT(DISTINCT coupon_code_id)`(실사용 고유 코드 수)가 다르므로 반드시 distinct 기준으로 뺄 것.
@@ -1550,6 +1581,7 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - **`customer_vno`**: 고객에게 050 동적 부여. **user_id 단위 키잉(폰번호 아님)** — 한 폰이 여러 app_user면 특정 user_id에만 붙음. 통화↔vno 매칭 구간 = `[assigned_at, COALESCE(cleared_at, expires_at)]`. ⚠️ `ASSIGN_FAILED` 대량(수십 건/일) = 더미폰 유저(01012345678류) 매시 재시도 반복이지 시스템 장애 아님 — `COUNT(DISTINCT user_id)`로 먼저 확인.
 - 🔴 **`customer_vno`에 050 번호 문자열이 없다** — `SELECT vno FROM customer_vno`는 `Unknown column`. 번호는 `vno_pool_id` FK로 **`vno_pool`(id·vno·status)** 을 조인해야 나온다(prod 전수: 번호 문자열 컬럼 `vno`를 가진 테이블은 `vno_pool`·`telephony_call_log`·`detailer` 셋뿐이고, **`detailer.vno`는 폐기된 "디테일러 고정 부여" 설계의 잔재로 전부 NULL**(163/163, 2026-08-21) — 고객 050을 찾다가 여기 조인하면 빈 결과가 난다). 배정 현황 표준형: `FROM customer_vno cv LEFT JOIN vno_pool p ON p.id = cv.vno_pool_id`. 현재 유효 배정 = `cv.status='ASSIGNED'`(과거 시점 커버리지엔 쓰지 말 것 — 현재상태 컬럼이라 회수된 과거 건이 전부 0으로 보인다. 과거는 `assigned_at`/`cleared_at` 구간으로).
 - **크론 실행 기록 = `job_execution`**(`job_id`→`job.name`, telephony 크론 8종). ⚠️ **status='FAILED'여도 장애 단정 금지** — 유저 1명 실패해도 execution 전체가 FAILED로 기록됨. `result` JSON의 `failureCount`/`successCount`를 먼저 볼 것.
+- 🔴 **`job_execution.status='SUCCESS'`도 "그 크론이 일했다"의 근거가 아니다 (2026-08-31 실측).** 핸들러가 내부 실패를 `warn` 로그로만 삼키면 실행은 SUCCESS로 남는다(`sweepUnjudged` 실사례 — 며칠간 아무도 못 봤다). **일했는지는 산출물 테이블에서 센다**: 그 크론이 쓰는 행의 `created_at`을 KST 시(hour)로 잘라 크론 시각대에 몇 건이 쓰였는지 본다. 예 — 20시 크론이면 `SUM(HOUR(CONVERT_TZ(created_at,'+00:00','+09:00'))=20)`. 이걸로 "SUCCESS인데 0건"과 "정상"이 갈린다.
 - 🔴 **`job.status='ACTIVE'`는 "돌고 있다"의 근거가 아니다 (2026-08-25 실측).** 테이블명은 **`job`**(`cron_job` 아님). 살아 있는지 판정하려면 두 가지를 같이 봐라: ① `job_execution`의 최종 실행 시각(`MAX(created_at)`), ② 그 job 이름의 핸들러가 코드에 실존하는지(zero-api `cron-internal.controller.ts`의 `@Post('/<jobName>')`). 실사례 — `sendRainRetouchAvailablePush`는 status `ACTIVE`인데 컨트롤러에 엔드포인트가 없고 2026-05-26에 5회 돌고 멈춰 있었다(리터치 알림이 통째로 안 나감), `sendRainPolicyUpdatedNotifications`는 61일 연속 매일 돌다 2026-07-19에 정지.
 
 ---
@@ -1665,6 +1697,7 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 **생성 경로·영업자 귀속 = `reservation_metadata`(`reservation_id` + `key` + JSON `value`) (2026-08-14 실측)**
 - `key='admin/walk-in'` = 현장접수(워크인), `key='admin/call'` = 콜콘솔 컨시어지, 둘 다 없으면 고객앱. **워크인만 세면 콜콘솔분이 통째로 빠진다.**
 - 워크인 value JSON에 **`intakeChannel`**(`FIELD_SALES`/발렛/직접방문) + **`fieldSalesDetailerId`·`fieldSalesDetailerName`** = 현장영업 실제 영업자. 접수 계정(`sales.partnerId`)은 반얀 공용 `오퍼레이터`라 영업자 특정에 못 쓴다 — **"누가 팔았나"는 이 필드가 정본**.
+- `key='partner'` / `key='partnerReason'` = 제휴처·VIP 예약 판정 결과(라벨과 판정 근거). **제휴 예약을 세는 정본이 여기다** — 쿠폰·utm으로 역산하면 판정 규칙과 어긋난다. 예약 생성 시점에 쓰이는 게 원칙이고, 구독 자동예약처럼 생성 이펙트를 안 타는 건은 세차 **D-1 20시 크론**(`partnerVipDailyDigest`)이 사후에 채운다 ⟹ 두 시각대가 섞여 있는 게 정상이다.
 - `key='banyan/strategy'` = 셀장이 쓴 판매 작전 텍스트(`{text, authorName, updatedAt}`).
   - 🔴 **수정 여부를 `modified_at`으로 판정하지 말 것 — 이 테이블은 갱신해도 `modified_at`이 안 변한다** (2026-08-17 실측: 43행 전부 `modified_at = created_at`). Prisma 모델에 `@updatedAt`이 없고 컬럼에도 `ON UPDATE`가 없다. 게다가 `(reservation_id, key)` unique 인덱스가 없어 저장 로직이 `findFirst`→`update`로 **같은 행을 덮어쓰므로 행 수도 안 늘어난다** → "아무도 수정 안 했다"로 오독한다.
   - **수정 판정 정본 = value JSON `updatedAt` vs `created_at` 비교**: `STR_TO_DATE(REPLACE(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(value,'$.updatedAt')),'T',' '),'Z',''),'%Y-%m-%d %H:%i:%s.%f')`. 실측 43행 중 4행이 최대 **+972분** 뒤 수정돼 있었다(둘 다 UTC).
