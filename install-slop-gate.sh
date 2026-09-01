@@ -3,7 +3,7 @@
 #
 # 팀 셋업(setup.sh/update.sh)을 쓰지 않는 사람용. 레포 클론도 필요없다.
 #
-#   curl -fsSL https://raw.githubusercontent.com/JapanesRamenMaster/caramel-team-setup/main/install-slop-gate.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/the-trive/caramel-team-setup/main/install-slop-gate.sh | bash
 #
 # 하는 일:
 #   1. 훅 스크립트 2개 → ~/.claude/scripts/
@@ -17,7 +17,7 @@
 
 set -eu
 
-BASE="${SLOP_BASE:-https://raw.githubusercontent.com/JapanesRamenMaster/caramel-team-setup/main}"
+BASE="${SLOP_BASE:-https://raw.githubusercontent.com/the-trive/caramel-team-setup/main}"
 DEST="$HOME/.claude"
 SCRIPTS="$DEST/scripts"
 SKILLS="$DEST/skills"

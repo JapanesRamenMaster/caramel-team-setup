@@ -13,7 +13,7 @@
 
 ### 설치 실행
 
-1. `git clone https://github.com/JapanesRamenMaster/caramel-team-setup.git /tmp/caramel-team-setup`
+1. `git clone https://github.com/the-trive/caramel-team-setup.git /tmp/caramel-team-setup`
    - **반드시 /tmp에 클론하세요.** `~/caramel-team-setup` 등 홈 디렉토리에 클론하지 마세요.
    - 공개 레포이므로 인증 없이 클론 가능합니다.
 2. `bash /tmp/caramel-team-setup/setup.sh --role "{역할}" --db-password "{비밀번호}" --email "{이메일}"`

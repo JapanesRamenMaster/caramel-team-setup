@@ -46,7 +46,7 @@ Stop 훅은 업무 대화까지 검사하면 방해가 되므로 조건을 뒀�
 ### 팀 셋업을 안 쓰는 사람 (레포 클론도 필요없음)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JapanesRamenMaster/caramel-team-setup/main/install-slop-gate.sh | bash
+curl -fsSL https://raw.githubusercontent.com/the-trive/caramel-team-setup/main/install-slop-gate.sh | bash
 ```
 
 훅 스크립트 2개와 스킬 3개를 `~/.claude/` 에 내려받고 `settings.json` 에 등록한다.

@@ -58,7 +58,7 @@ git -C ~/.caramel-team-setup pull --ff-only
 레포만 클론한 뒤 이 스킬로 필요한 스킬만 가져가면 된다.
 
 ```bash
-git clone https://github.com/JapanesRamenMaster/caramel-team-setup ~/.caramel-team-setup
+git clone https://github.com/the-trive/caramel-team-setup ~/.caramel-team-setup
 ```
 
 DB 조회가 필요한 스킬은 `~/.caramel-team-setup/mysql-query.sh`를 쓰는데,

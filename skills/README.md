@@ -7,7 +7,7 @@
 레포만 클론하고 필요한 스킬 디렉토리만 복사하면 된다.
 
 ```bash
-git clone https://github.com/JapanesRamenMaster/caramel-team-setup ~/.caramel-team-setup
+git clone https://github.com/the-trive/caramel-team-setup ~/.caramel-team-setup
 cp -R ~/.caramel-team-setup/skills/reassign ~/.claude/skills/reassign
 ```
 
