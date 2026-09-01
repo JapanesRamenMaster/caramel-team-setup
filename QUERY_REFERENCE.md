@@ -485,6 +485,7 @@ GROUP BY s.detailer_id, d.name ORDER BY min_km;
 3. **채택 판단은 거리가 아니라 "동선 사이에 끼는가"** — 후보의 직전/직후 예약 시각·좌표를 뽑아 삽입 가능한지 본다(+ 하루 5건 캡). 목표가 기존 동선 한복판에 떨어지는 후보가 정답.
 4. ⚠️ `detailer_holiday`는 **UTC 저장**이라 "그날 휴무" 판정 윈도우는 `from < 'X일 14:59:59' AND to > '(X-1)일 15:00:00'`. `from <> to` 필터도 같이(§6b 무력화 row). 그래도 예약이 있는 사람이 휴무로 잡히는 경우가 있으니 **route와 교차확인**.
    - 🔴 **하루 겹침만 보면 "부분 시간 블록"이 종일 탈락으로 번져 후보를 잃는다 (2026-07-26 실사례).** 황석찬(114)에게 memo `셀원 품질 점검`으로 **매일 UTC 05:00~09:00(=KST 14~18시) 4시간 row가 4월~8월 대량 선삽입**돼 있어, 겹침 필터로는 "휴무 있음"이 되지만 오전은 근무 가능이다. **판별 = `TIMESTAMPDIFF(HOUR, from, to) > 8`이면 종일, 이하면 부분 블록**(+`memo` 확인). 위 쿼리처럼 두 NOT EXISTS로 분리할 것.
+   - 🔴 **다일 종일 휴무의 마지막 날은 `to`의 날짜가 아니다 (2026-09-01 실측).** 종일 휴무는 `to`가 **끝난 다음 날 KST 00:00**으로 박힌다 — id 12284 = KST `8/31 00:00 ~ 9/2 00:00` = 8/31·9/1 **이틀**이고 9/2는 근무일이다. `DATE(to)`로 마지막 날을 세면 하루를 더 센다(마지막 날 = `DATE(to - INTERVAL 1 SECOND)`). 위 윈도우식의 `to >`가 strict인 이유가 이것이고, `>=`로 바꾸면 안 쉬는 날이 휴무로 잡힌다. 같은 실수를 편성 화면 코드가 냈다 — 지울 수 없는 유령 휴무 줄(zero PR #1859).
    - ⚠️ 반대 방향도 틀린다 — 같은 사람에게 **종일 row가 별도로 존재**할 수 있다(황석찬은 `출산 휴가 - 연차` 7/19~7/31 종일 row가 있어 결과적으로 탈락). **부분/종일 둘 다 조회해야 정답.** 한쪽만 보고 "가용/불가"를 확정하지 말 것.
 5. 실행 전 §6b "재배정 대상 사전검증"을 반드시 통과시키고, 실행은 재배정 API로(DB 직접 UPDATE 금지). `skipConflictCheckYn=false`로 두면 TMap 실이동시간 기반 충돌체크가 돌아 삽입 타당성을 한 번 더 걸러준다.
 6. **교체 전 고객 통지 상태 확인** — D-1 알림톡 본문엔 담당 디테일러 **이름**이 들어간다(§6g). 이미 나갔으면 교체 시 고객이 본 이름이 바뀌므로 재통지 필요.
@@ -807,9 +808,11 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
     - ⟹ change_log만 보면 셔플 이동을 놓치고, `modified_at`만 보면 고객 변경분의 before/after 디테일러를 잃는다. **"재배정 이력" 질문엔 항상 두 쿼리를 돌릴 것.**
   - 🔴 **초는 `00`이 아니다 — `TIME(modified_at)='17:00:00'` 등호 필터는 0건이 나온다 (2026-07-26 실측).** 배치가 17:00:00에 시작해 수 초간 쓰므로 실제 저장값은 `17:00:14` 같은 형태다. **판별은 `HOUR(modified_at)=17 AND MINUTE(modified_at)=0`.** "정각"이라는 표현에 낚여 초까지 등호 비교하면 "셔플이 안 돌고 있다"고 오판한다 — 실제로는 매일 돌고 있다(7/23~26 각 12·27·50·93건 변경).
 
-**⚠️ mysql-query.sh DATETIME 렌더링 함정 (쓰기 작업 시 치명적)**
+**⚠️ mysql-query.sh DATETIME 렌더링 함정 (읽기·쓰기 둘 다 치명적)**
 - DATETIME 컬럼을 그냥 SELECT하면 `...Z` ISO로 보이지만 **실제 저장값이 아니라 저장값−9h** (드라이버가 naive 값을 KST 로컬로 해석해 UTC ISO로 직렬화).
 - 저장 원문이 필요하면 `DATE_FORMAT(col,'%Y-%m-%d %H:%i:%s')`로 문자열화해서 읽을 것.
+- 🔴 **읽기 판정도 뒤집는다 (2026-09-01 실사례).** `detailer_holiday` 겹침 조회에서 raw JSON의 `"2026-08-30T06:00:00.000Z"`를 UTC로 믿고 "9/2를 덮는 휴무 0건"이라 결론냈는데, 저장 원문은 `2026-08-30 15:00:00`(=KST 8/31 00:00)이라 **9시간 어긋난 오답**이었다. ⟹ 날짜 경계가 걸린 판정은 처음부터 `DATE_FORMAT(DATE_ADD(col, INTERVAL 9 HOUR),'%Y-%m-%d %H:%i:%s')`로 KST 문자열을 뽑아 볼 것.
+- 세션 tz는 `Asia/Seoul`, 컬럼은 `datetime`(MySQL 무변환)이라 **저장 원문 = UTC 벽시계**다. 드라이버만 이걸 KST로 오해한다. Prisma는 같은 값을 UTC로 읽으므로 **앱이 보는 값 = DATE_FORMAT 원문**이고, JSON 렌더값이 아니다.
 - INSERT/UPDATE의 인라인 리터럴은 **verbatim 저장**됨 → SELECT에서 본 `Z` ISO 값을 그대로 복붙해 넣으면 9시간 어긋난다. 반드시 DATE_FORMAT으로 읽은 원문 기준으로 쓸 것.
 
 **⚠️ DATE 컬럼(시각 없음)도 렌더링 함정 — 하루 밀림**
@@ -1104,6 +1107,13 @@ JOIN reservation_draft d
 - **기간 파견 패턴 = 스케줄 3토막**: ①기존 스케줄 `effective_to` 단축 ②파견 스케줄(기간 한정) INSERT ③복귀 스케줄(파견 종료 익일~영구) INSERT. ③을 빼먹으면 파견 종료 후 배정 공백.
 - 🔴 **스케줄 무효화 관례 = `effective_from = effective_to` (2026-08-06 실측).** 파견 중 원존 차단 등에서 행을 지우지 않고 길이 0으로 눌러둔다(염철림165 sched 786 = `2026-08-06 15:00` 양쪽 동일). ⟹ **effective 판정은 반드시 `effective_from < X AND effective_to > X` (양쪽 strict)**. `BETWEEN`이나 `effective_to >= X`로 쓰면 무효화된 스케줄이 근무 중으로 잡힌다(위 §슬롯/근무 예시 중 `BETWEEN`·`effective_to >= 'D일 00:00:00'` 형태는 이 관례 이전 것이니 그대로 복사하지 말 것). 무효화 결과 그날 어떤 type의 스케줄도 없으면 슬롯 0 · work-day API `blocks: []`.
   - ⚠️ **파견 일정이 뒤로 밀리면 무효화가 남아 공백이 된다** — 염철림은 원존 차단으로 786을 눌렀는데 반얀 파견이 8/10~8/11로 미뤄져 **8/7~8/9 사흘간 아무 스케줄도 없는** 상태가 됐다. 파견 일정 변경 시 무효화 행을 되돌렸는지 함께 확인할 것.
+
+**`detailer_schedule_change_log` — 근무 편성 저장 이력 (2026-09-01 신규)**
+- 편성 화면(`/admin/detailer/schedule-compose`)과 휴무 API의 **저장이 1건씩 남는다.** `detailer_work_schedule`·`detailer_holiday`엔 이력이 없으므로 **"왜 저장이 안 먹었나"를 되짚는 유일한 소스**다.
+- `data` JSON = `beforeSegments`/`afterSegments`(구간 배열) + `editedFrom`/`editedTo`(편집 창) + `acknowledgedReservationIds`. before/after를 나란히 놓으면 그 저장이 실제로 무엇을 바꿨는지 그대로 보인다.
+- ⚠️ **스냅샷은 편집 창으로 잘려 있다** — 창 밖 편성은 안 담기니 전체 타임라인으로 읽지 말 것.
+- `reason`은 사람이 쓴 사유(`교육 취소`) 또는 상수(`ADMIN_SCHEDULE_BOARD_HOLIDAY_*`). 여러 명 일괄 저장은 `batch_id`로 묶인다.
+- ``SELECT id, DATE_ADD(created_at, INTERVAL 9 HOUR) kst, reason, JSON_PRETTY(data) FROM detailer_schedule_change_log WHERE detailer_id=? ORDER BY id DESC``
 
 **detailer_holiday 처리**
 - 단기(≤7일) full-day (`from ≤ 당일 00:00` AND `to ≥ 익일 00:00`) → 실제 off
@@ -1582,6 +1592,8 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - 🔴 **`customer_vno`에 050 번호 문자열이 없다** — `SELECT vno FROM customer_vno`는 `Unknown column`. 번호는 `vno_pool_id` FK로 **`vno_pool`(id·vno·status)** 을 조인해야 나온다(prod 전수: 번호 문자열 컬럼 `vno`를 가진 테이블은 `vno_pool`·`telephony_call_log`·`detailer` 셋뿐이고, **`detailer.vno`는 폐기된 "디테일러 고정 부여" 설계의 잔재로 전부 NULL**(163/163, 2026-08-21) — 고객 050을 찾다가 여기 조인하면 빈 결과가 난다). 배정 현황 표준형: `FROM customer_vno cv LEFT JOIN vno_pool p ON p.id = cv.vno_pool_id`. 현재 유효 배정 = `cv.status='ASSIGNED'`(과거 시점 커버리지엔 쓰지 말 것 — 현재상태 컬럼이라 회수된 과거 건이 전부 0으로 보인다. 과거는 `assigned_at`/`cleared_at` 구간으로).
 - **크론 실행 기록 = `job_execution`**(`job_id`→`job.name`, telephony 크론 8종). ⚠️ **status='FAILED'여도 장애 단정 금지** — 유저 1명 실패해도 execution 전체가 FAILED로 기록됨. `result` JSON의 `failureCount`/`successCount`를 먼저 볼 것.
 - 🔴 **`job_execution.status='SUCCESS'`도 "그 크론이 일했다"의 근거가 아니다 (2026-08-31 실측).** 핸들러가 내부 실패를 `warn` 로그로만 삼키면 실행은 SUCCESS로 남는다(`sweepUnjudged` 실사례 — 며칠간 아무도 못 봤다). **일했는지는 산출물 테이블에서 센다**: 그 크론이 쓰는 행의 `created_at`을 KST 시(hour)로 잘라 크론 시각대에 몇 건이 쓰였는지 본다. 예 — 20시 크론이면 `SUM(HOUR(CONVERT_TZ(created_at,'+00:00','+09:00'))=20)`. 이걸로 "SUCCESS인데 0건"과 "정상"이 갈린다.
+- 🔴 **같은 크론 이름·같은 `job_id` 를 zero-api 와 레거시 caramel-api 가 공유한다 — `job_execution` 만 보면 어느 쪽이 보냈는지 못 가른다 (2026-09-01 실측).** 발신 주체 판정 2단계: ① **`job.metrics.source`** 가 채워져 있으면 zero-api(파일 경로가 들어온다), **NULL 이면 레거시**. ② charts 레포 **`caramel-api-cron/values-prod.yaml`** 에서 그 이름을 찾는다 — `defaults.suspend: true` 라서 **항목에 `suspend: false` 가 없으면 zero 쪽은 안 돈다**(2026-09-01 기준 리마인더 중 `dMinus2WashReminder` 만 활성, `beforeWashReminder`·`dDayWashReminder`·`reservationReminder`·`parkingInfoReminder` 는 suspend). 레거시 스케줄은 데코레이터에 박혀 있다(`apps/batch/src/messaging/messaging.service.ts` 의 `@Cron(CronExpression.EVERY_DAY_AT_6PM)` 등) — `job.cron_time` 은 레거시 행에선 한글 문구("매일 20시")까지 섞인 **참고값**이라 믿을 게 아니다.
+  - ⟹ **"제외 로직을 넣었는데 왜 계속 나가나"는 여기서 갈린다.** zero 코드만 읽고 "제외됨"으로 판정하지 말 것.
 - 🔴 **`job.status='ACTIVE'`는 "돌고 있다"의 근거가 아니다 (2026-08-25 실측).** 테이블명은 **`job`**(`cron_job` 아님). 살아 있는지 판정하려면 두 가지를 같이 봐라: ① `job_execution`의 최종 실행 시각(`MAX(created_at)`), ② 그 job 이름의 핸들러가 코드에 실존하는지(zero-api `cron-internal.controller.ts`의 `@Post('/<jobName>')`). 실사례 — `sendRainRetouchAvailablePush`는 status `ACTIVE`인데 컨트롤러에 엔드포인트가 없고 2026-05-26에 5회 돌고 멈춰 있었다(리터치 알림이 통째로 안 나감), `sendRainPolicyUpdatedNotifications`는 61일 연속 매일 돌다 2026-07-19에 정지.
 
 ---
@@ -1684,6 +1696,17 @@ WHERE cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르�
 - 🔴 **현장(반얀·천호) 예약이 "주차 위치를 알려주세요" 알림을 안 받는 기전은 크론 필터가 아니라 `parking_info_content = '자유'` 선채움이다 (2026-08-29 실측).** 예약 **생성 코드**가 반얀 주소면 이 값을 미리 박는다(`prisma-reservation-facts.repository.ts`). 30분전 크론은 `parking_info_content IS NULL` + `user_address.parking_location_content IS NULL` 만 집으므로 자동으로 빠진다. ⟹ **크론 코드만 읽고 "현장 제외가 없다"고 결론내면 오답이다** — 실제로 그렇게 잘못 답한 적이 있다.
   - ⚠️ **선채움은 생성 경로에 의존해서 샌다.** `reserved_with_date=0` 으로 만들어진 예약엔 안 붙는다. 2026-08-29 기준 미래 반얀 예약 **4건**이 조건에 걸렸고 그중 **3건은 푸시 토큰까지 있었다.** 현장 알림 차단 여부를 볼 때 "코드에 분기가 있으니 괜찮다"로 넘기지 말고 **위 두 컬럼으로 실제 대상 건수를 세라.**
   - 정본 스위치는 `field_site.flags.skipReminder` 로 옮겼다(zero PR, 2026-08-29). 이건 생성 경로와 무관하게 크론에서 막는다.
+  - 🔴 **단, 이 스위치는 리마인더 4종 중 D-2 하나에만 실제로 걸린다 (2026-09-01 실측). "현장 고객은 리마인더 안 받는다"로 읽으면 오답이다.** 제외 코드는 zero-api 에 있는데 나머지 3종의 zero 크론이 charts 에서 suspend 라, 실제 발송은 제외가 없는 레거시 caramel-api(`apps/batch/src/messaging/messaging.service.ts`)가 한다.
+
+    | 안내 | type | KST | 발송 주체 | 제외 |
+    |---|---|---|---|---|
+    | D-2 | `washReminderTwoDays003` | 13:00 | zero-api | ✅ |
+    | 내일세차 | `reservationUpcoming003` | 18:00 | 레거시 | ❌ |
+    | 주차위치(D-Day) | `parkingInfo001` | 07:00 | 레거시 | ❌ |
+    | 예약안내 | `reservationReminder` | 13:00 | 레거시 | ❌ |
+
+    실측(2026-08-31): 18:00 수신 119명 중 **현장 전용 고객 17명**(천호 10·반얀 7), 07:00 은 22명(천호 10·반얀 12).
+    ⟹ **현장 알림 누수를 볼 때 "제외 코드가 머지됐다"로 끝내지 말고, 아래 발신 주체 판정(§6g)까지 갈 것.**
 
 🔴 **`note`/`detailer_note` 쓰기 경로 = DB UPDATE만이 아니다 (2026-08-06 실측).** sales-admin `PATCH https://gateway-prod.thetrive.com/careplus/reservations-admin/{id}` 가 `note`·`detailerNote`·`complaintYn`·`complaintReason`·`overtimeExpectedReason`를 받는다(`UpdateReservationAdminDto`, `'note' in dto` 방식이라 **보낸 키만** 갱신 → 다른 필드 안전). 알림 부작용 없음. ⟹ **prod DB 직접 UPDATE 하지 말고 이 PATCH를 쓸 것.** 단 이 API는 **덮어쓰기**이므로 기존 값이 있으면 먼저 SELECT해서 이어붙인 전문을 보낼 것.
 
