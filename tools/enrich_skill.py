@@ -99,7 +99,7 @@ def create_pr(
     submitter: str,
     source: str,
     github_token: str,
-    repo_name: str = "JapanesRamenMaster/caramel-team-setup",
+    repo_name: str = "the-trive/caramel-team-setup",
 ) -> str:
     """enriched_content를 skills/{skill_name}/SKILL.md로 PR 생성. PR URL 반환."""
     g = Github(github_token)
