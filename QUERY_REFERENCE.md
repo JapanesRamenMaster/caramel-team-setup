@@ -1532,6 +1532,7 @@ BEFORE/AFTER 섹션 종류:
 - ⚠️ **쿠폰 세차권으로 생성된 예약만 조회할 땐 `user_id` JOIN 금지** — `coupon_code_usage → user_id → reservation.user_id`로 붙이면 그 유저의 쿠폰과 무관한 **전체 예약**이 섞인다. 반드시 `user_service.reservation_id` 경유로 연결 (위 3가지 발급 컬럼 중 캠페인 구조에 맞는 것으로 user_service를 특정한 뒤 reservation_id로 조인).
 - ⚠️ **`coupon_code.name`과 `payment.name`을 `UNION`/`UNION ALL`로 합치면 MySQL 1253 "Illegal mix of collations" 에러.** `payment.name`=`utf8mb4_general_ci`, `coupon_code.name`=`utf8mb4_unicode_ci`로 컬레이션이 다르다(테이블별 컬레이션 혼재 — 다른 테이블 쌍도 의심). 수정은 파라미터가 아니라 **컬럼 쪽에 `COLLATE`**: `p.name COLLATE utf8mb4_unicode_ci`. 목킹 유닛테스트로 못 잡고 실 DB 실행에서만 드러남 — 새 테이블 쌍을 UNION으로 합칠 땐 `SELECT TABLE_NAME,COLUMN_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='caramel-prod' AND TABLE_NAME IN (...)`로 먼저 대조.
 - **전환 퍼널 = 발급≠사용**: ① `coupon_code_usage`(수령) → ② `user_service.reservation_id IS NOT NULL`(예약) → ③ `reservation.status='WASHED'`(완료). 무료 쿠폰은 ①→②에서 대량 이탈.
+- **등록된 쿠폰의 보상 종류(할인/무료세차/옵션) 집계는 두 경로 UNION**: ① `coupon_code_usage → coupon_code_reward(coupon_code_id)`(코드별 보상) ② `coupon_code_usage → coupon_code.campaign_id → coupon_campaign_reward`(캠페인별 보상). 한쪽만 조인하면 절반이 빠진다(2026-09-03 60일 실측: PROMOTION 코드별 97명 vs 캠페인별 166명, SERVICE 39 vs 109).
 - 🔴 **쿠폰 "등록자" 모수는 `coupon_code_usage`로 세라. `promotion_application` 경유는 발급경로가 바뀌면 조용히 0이 된다 (2026-08-12 실측).** `promotion_application`은 쿠폰 등록과 **같은 트랜잭션에서** 생긴다(`created_at` diff 0초 — "적용 시점에 생긴다"가 아니다). 함정은 **보상 연결 컬럼이 시점에 따라 바뀐다**는 것: jyc 캠페인은 **2026-06-26부터 `coupon_code_reward_id` → `coupon_campaign_reward_id`로 전환**됐고 7/1 이후 등록은 100% 후자다(등록월별 code_reward/campaign_reward = 3~5월 56/0 → 6월 35/16 → **7월 0/17** → 8월 2/22). `coupon_code_reward_id`만 조인한 추적기는 **7월 이후 쿠폰 등록자를 0명 잡았다**(JYC 시트 실사고). ⚠️ 옛 캠페인만 보면 격차가 거의 없어(56 = 47/50) "두 경로 비슷하다"고 오판한다 — 위 §6e "발급경로 3가지 다 확인" 경고의 재발 사례이고, `coupon_code_usage`는 경로 변경에 면역이라 모수용으로 안전하다.
 - 🔴 **제휴처 모수는 `campaign_id` 하드코딩 대신 `coupon_campaign.partner_name` 전수로 (2026-08-12 실측).** 같은 제휴처가 코드 소진 후 **동명 후속 캠페인을 새로 발행**한다: jyc = 56·57 `[jyc] 첫 세차 프리미엄 패키지`(2026-03-04) → **62·63 `..._2`(2026-05-04)**. campaign_id를 박아둔 추적기·시트는 **신규 캠페인을 조용히 통째로 놓친다** — 실사례: JYC 추적 GAS가 56·57만 봐서 _2 등록자 61명 중 **57명 누락(그중 30명은 이미 세차 완료)**, 전 기간 세차완료자가 113명으로 보였으나 실제 145명(32/145 = 22% 과소). 판정 = `JOIN coupon_campaign cpn ON cpn.id = cc.campaign_id AND cpn.partner_name = '<제휴처>'`. ⚠️ 위 현대백화점 N회권 분할(73/74/75)과는 **다른 축** — 그건 회권별 동시 분할, 이건 시간순 재발행이다.
 - 리텐션/매출은 `user_service.paid_amount`와 `payment`(status='PAID') 양쪽으로 교차검증. 무료세차 당일 결제는 현장 옵션 업셀 — `payment.paid_at > 무료세차 washed_at`로 진짜 재방문만 분리.
@@ -1981,6 +1982,16 @@ LEFT JOIN service s ON s.id = us.service_id
   - 카탈로그 조회 API(`GET /v1/admin/users/{id}/entitlement-grant-catalog`)는 prod 404(미배포) — 위 SQL 절차로 우회.
 
 ---
+
+### onboarding_reservation_intent (온보딩 v3 퍼널 상태, 2026-07-11 prod~)
+온보딩 v3(랜딩→주소→차량→상품→시간→방문정보→예약확인)의 **진행 상태 1행/시도**. 앰플리튜드 없이 DB로 퍼널 단계·이탈·결제방식을 보는 유일한 소스.
+
+- `status`: `ACTIVE`(진행중, 이탈 포함) / `COMPLETED`(예약 생성됨, `reservation_id`·`completed_at` 채워짐) / `ABANDONED`. 실측(2026-09-03, 60일) ACTIVE 6,766 · COMPLETED 568 · ABANDONED 108 — ABANDONED는 소수라 **이탈 모수는 `status<>'COMPLETED'`** 로 잡는다.
+- 🔴 **`user_id`는 인증(휴대폰 로그인) 전엔 NULL** — 비로그인으로 시작해 `client_key`가 소유한다(ACTIVE 6,766 중 user_id 있는 건 1,312). 인증은 방문정보 뒤에 오므로 "유저별 퍼널"은 인증 이후 단계만 보인다. 시작 시각 `created_at`, 인증 시각 `user_attached_at`.
+- `last_step_key` 순서: `ADDRESS_RESULT` → `VEHICLE_MODEL_SELECTED` → `VEHICLE_PLATE_COMPLETED` → `PRODUCT_SELECTED` → `SLOT_SELECTED` → `VISIT_INFO_CONTACT_COMPLETED`(=예약확인·결제 직전). 이탈 단계 분포는 이 컬럼을 GROUP BY.
+- 결제 방식 = `JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.completionPaymentMode'))` → `PREPAID` / `POSTPAID_ONSITE_COLLECTION`. ⚠️ 7월 말 이전 완료 건은 키 자체가 없어 NULL(60일 568건 중 95건). 후불 여부 정본은 아래 `reservation_onsite_collection`.
+- `pricing_snapshot.coupon`(`promotionId`·`promotionApplicationId`) = 결제에 **자동 적용된 할인쿠폰**(대부분 웰컴 20% = promotion 55, 선결제의 83%). 온보딩은 `promotion`(할인)만 적용하고 **무료 세차권(`user_service`)은 소비하지 않는다** — "세차권 있는데 결제한 사람"은 `user_service`(`used_yn=0`·`deleted_yn=0`·`reservation_id IS NULL`·`created_at < i.completed_at`)를 따로 조인해서 본다.
+- JSON 컬럼(`address_candidate`·`vehicle_candidate`·`product_selection`·`slot_selection`·`visit_info`·`metadata`)은 `JSON_KEYS()`로 키를 먼저 확인. `metadata.entrySource`(`MY_GARAGE_FIRST_WASH`/`CALENDAR_FIRST_WASH`)가 있으면 랜딩이 아니라 기존 고객의 첫세차 진입.
 
 ### reservation_onsite_collection (온보딩 후불 결제/현장 수금, 2026-07-11 prod~)
 온보딩 v3의 **'후불 결제' 예약 canonical marker**. 예약 시 결제 없이 세차 현장에서 수금.
