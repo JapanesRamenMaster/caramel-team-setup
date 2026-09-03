@@ -170,6 +170,16 @@ JOIN car c ON c.id = rc.car_id AND c.deleted_yn = 0
 - 올바른 조인: `LEFT JOIN car_model cm ON c.model_id = cm.id`
 - 🔴 **`model_id`가 NULL인 실차가 실존한다** (2026-08 기준 233대·148명, `deleted_yn=0 AND temp_yn=0`). 어드민·디테일러 차량등록 API가 modelId 없이도 INSERT를 허용해서 생긴다. ⟹ **`INNER JOIN car_model`이나 `JOIN car_model_target cmt ON cmt.id=c.model_id`로 티어·타겟을 집계하면 이 차량들이 조용히 분모에서 사라진다.** "차량 수가 안 맞는다" 싶으면 `SUM(c.model_id IS NULL)`을 먼저 세볼 것. 모수 카운트는 `deleted_yn=0 AND temp_yn=0` **둘 다** 필요(제품 코드도 `temp_yn: false`로 필터하므로 이게 실제 영향 모수와 일치).
 - 참고: 이 row는 고객 차량목록 API(`/v1/vehicles/garage`·`/v1/my-garage`)를 **404로 깨뜨려 그 고객은 예약을 못 한다**. 발견하면 제품팀에 알릴 것. (마이차고 화면은 `/v1/me`를 써서 정상으로 보이는 비대칭이 있음 — 브랜드 없이 번호판만 뜨는 차량이 시그널.)
+- ⚠️ **재측정(2026-09-02): `deleted_yn=0 AND temp_yn=0`으로는 `model_id IS NULL`이 이제 **0대**다.** 남은 NULL 3,276대(전체 3,552 중)는 **전부 `temp_yn=1`**. 위 233대 수치는 2026-08 시점 값이니 인용 전 다시 세라 — 함정 자체(INNER JOIN이 조용히 삼킴)는 temp 차량을 모수에 넣는 쿼리에서 그대로 유효하다.
+
+**차량 표시명(브랜드+모델) 조립 — `CONCAT(cb.name, ' ', c.model)`은 두 군데서 깨진다 (2026-09-02 실측, 전체 173,432대 `deleted_yn=0 AND temp_yn=0`)**
+- 🔴 **`car.model`(자유입력)이 비어 있는 차가 69,793대 = 40.2%.** 표시명을 `c.model`만으로 만들면 열에 넷은 브랜드만 남는다. ⟹ **`COALESCE(NULLIF(c.model,''), cm.name)`** 로 `car_model.name` 폴백을 반드시 건다.
+- 🔴 **`car.model`에 이미 영문 브랜드가 붙어 있는 차가 17,845대 = 10.3%.** 앞에 `cb.name`을 그대로 붙이면 `BMW BMW X5 xDrive40i`·`벤츠 Mercedes-Benz GLC220 d`가 나온다. 고객에게 나가는 목록(콜리스트·리포트·시트)이면 **한글 브랜드명 ↔ 영문 별칭 매핑으로 접두어 중복을 걷어낼 것**(`벤츠`↔`mercedes`/`mercedes-benz`/`mercedes-amg`/`amg`, `랜드로버`↔`land`/`range` 등). 화면 코드가 하는 정규화를 SQL은 안 해준다.
+- 브랜드는 `car.brand_id` 경유가 맞다(`cb.id = c.brand_id`). NULL은 11대뿐이라 `LEFT JOIN` + `COALESCE`로 충분 — `car_model` 경유(`cm.brand_id`)로 우회할 필요 없다.
+```sql
+TRIM(CONCAT(COALESCE(cb.name,''),' ',COALESCE(NULLIF(c.model,''), cm.name, ''))) AS car_display
+-- 뽑은 뒤 '한글브랜드 + 영문브랜드' 중복 접두어를 애플리케이션에서 한 번 더 제거
+```
 
 **원부 이력 `car_wonbu_history` — 브랜드 컬럼 없음**
 - 있는 컬럼: `plate_number, search_number, mileage, registered_at, final_registered_at, inspection_valid_start_at, inspection_valid_end_at, model, type, vin, car_year, color, form, engine_type, capacity, is_commercial_car, deleted_yn, requested_at, created_at`.
@@ -322,13 +332,41 @@ HAVING COUNT(DISTINCT ua.user_id) >= 5   -- 오탈자성 1~2건 단지 제거
 
 디테일러/CS가 "N시·M시 중복 예약"이라 신고해도 **그 날짜에 해당 시각 예약이 아예 없을 수 있음** (2026-07-19 실사례: "4시·6시 중복" 신고 → 당일엔 18시 1건뿐, 실체는 7/31 18시 + 8/3 16시).
 
-- 실체는 대개 **구독 자동예약 클러스터 쌍**: 같은 배치(`created_at` 동일)로 생성된 2건이 ±7일 날짜밀림으로 며칠 간격까지 붕괴한 것.
-- 진단 절차: 신고 시각으로 검색 → 없으면 **고객의 CONFIRMED 전체를 `created_at` 배치별로 묶어** ① 배치 쌍 간격 붕괴(2주 미만) ② 월별 건수가 플랜(월 N회) 초과인지 확인.
+- 🔴 **`created_at`으로 원인을 판정하지 말 것 (2026-08-03 오진, 2026-09-01 재확인).** "두 건의 `created_at`이 초까지 같다 = 한 배치가 붕괴시켰다"는 **틀렸다**. `reservation_datetime`은 리스케줄로 덮어써지므로 `created_at`은 생성 시점만 말할 뿐 **그때 어느 날짜에 잡혔는지는 말하지 않는다.** 전수 판정 2회 모두 **배치 기원 중복 0건**이었다(8/3 미래 32그룹 · 9/1 하루차이 15쌍 전부 고객 리스케줄).
+- **판정 정본 = `reservation_change_log`.** 각 예약의 `RESERVATION_DATETIME_CHANGED` row에서 `from/toReservationDatetime`을 읽어 **마지막으로 옮긴 쪽이 어디서 왔는지**를 본다. 로그가 한쪽에라도 있으면 고객 기원이다.
 ```sql
-SELECT id, DATE_FORMAT(CONVERT_TZ(reservation_datetime,'+00:00','+09:00'),'%Y-%m-%d %H:%i') dt_kst,
-       created_at FROM reservation WHERE user_id=? AND status='CONFIRMED' ORDER BY reservation_datetime;
+SELECT reservation_id, LEFT(JSON_UNQUOTE(JSON_EXTRACT(data,'$.fromReservationDatetime')),16) f,
+       LEFT(JSON_UNQUOTE(JSON_EXTRACT(data,'$.toReservationDatetime')),16) t,
+       JSON_UNQUOTE(JSON_EXTRACT(data,'$.reason')) reason, actor_type,
+       DATE_FORMAT(CONVERT_TZ(created_at,'+00:00','+09:00'),'%m-%d %H:%i') at_kst
+FROM reservation_change_log WHERE reservation_id IN (...) ORDER BY reservation_id, id;
 ```
+- **간격별 결말 기준선** (2026-02~08 실측. `CREATED`·데모차·테스트계정·리터치 제외, 세차권이 붙었던 예약만, 자기조인 중복 제거):
+
+  | 간격 | 쌍 | 둘 다 WASHED | 한쪽 취소 | 둘 다 취소 |
+  |---|---|---|---|---|
+  | 0일(같은 날) | 1,312 | **1.4%** | 65.0% | 32.8% |
+  | 1일 | 781 | **2.6%** | 69.3% | 27.5% |
+  | 2일 | 500 | 6.0% | 67.2% | 26.2% |
+  | 3일 | 482 | 6.4% | 63.7% | 29.5% |
+
+  ⟹ **하루 차이는 2~3일 쪽이 아니라 같은 날 쪽에 붙어 있다** (2~3일에서 2배 넘게 꺾인다). 97%가 결국 하나로 정리되지만 **공짜가 아니다 — 6~8월 199건 중 32%가 세차 3일 이내, 17%가 하루 전·당일에 취소된다.** 그만큼 슬롯이 잠기고 동선이 그 세차를 낀 채 짜인다.
+- 🔴 **`user_service`에 `deleted_yn=0 AND paid_yn=1 AND used_yn=1`을 걸고 과거 결말을 세지 말 것 (2026-09-01 실사고).** 예약을 취소하면 세차권이 `deleted_yn=1`이 되므로 **이 필터는 취소 건을 표본에서 통째로 지운다.** 같은 질문에 "하루 차이 둘 다 세차 47.6%"라는 정반대 답이 나왔다(실제 2.6%). 이 필터는 **지금 살아있는 예약을 고를 때만** 쓰고, 결말 분석에는 `EXISTS (SELECT 1 FROM user_service WHERE reservation_id=r.id)`(삭제분 포함)로 바꿀 것.
+- ⚠️ **자기조인 쌍 세기: `y.id <> x.id`를 빼먹으면 gap=0에서 예약이 자기 자신과 매칭돼 건수가 20배로 부풀고 "98.6% 둘 다 세차"가 나온다.** gap≥1은 `y.d > x.d`라 무해하지만 0을 범위에 넣는 순간 터진다.
+- 🔴 **"구독 종료 후 잔여 소진이라 둘 다 원하는 것"은 틀렸다 (2026-09-01 반증).** 하루 차이 쌍을 구독 상태로 갈라보면 구독 유효 533쌍 2.3% vs **구독 종료 후 126쌍 0.0%** — 만료 임박 소진 유형이 오히려 **가장 확실하게 하나가 죽는다.** 몰아 잡아두고 결국 버린다. `ended_at`을 "취소하지 말 근거"로 쓰지 말 것. 조인은 `user_service`(reservation_id ↔ subscription_id) 경유 — `reservation.subscription_id`는 전부 NULL.
 - 처리는 어드민 API `bulk-cancel` + `ticketAction: GIVE_BACK`(세차권 반환, §5c 재발급 메커니즘 참고). DB 직접 UPDATE 금지.
+
+#### 알림 슬랙 숫자를 재현할 때 — 크론 필터를 그대로 복제하지 않으면 "숫자만 같고 구성이 다른" 답이 나온다
+
+`#caramel_세차신청_알림`의 `:broom: 같은 날 중복 예약 자동 정리`가 말하는 건수를 검산할 때, 대충 짠 쿼리로도 우연히 같은 숫자가 나올 수 있다(2026-09-01 실사례: 15 vs 15인데 구성이 2건 달랐다). 스캔 조건 정본은 zero `prisma-reservation-anomaly-scan.repository.ts`이고, 빼먹기 쉬운 것:
+
+- `status IN ('CONFIRMED','IN_PROGRESS')` — `CREATED`·`RESERVED` 아님
+- `user_service`에 `deleted_yn=0 AND paid_yn=1 AND used_yn=1`인 row가 **반드시 있어야** 함(무티켓 예약 제외)
+- 테스트 계정 전화번호 4개 제외: `01000000000`·`01000010001`·`01010000000`·`01012345678`
+- **리터치 제외**: `NOT EXISTS (SELECT 1 FROM reservation_retouch rt WHERE rt.retouch_reservation_id = r.id)` — 리터치는 원 예약과 같은 날 잡혀도 정상
+- 차량이 2대 이상 붙은 예약 제외(살아있는 `car`만 세어 1대인 것만)
+- 스캔 창 = 오늘+1일 ~ 오늘+10일 KST
+- 🔴 **슬랙 문구 "예약이 N건"은 실제로 N**쌍**이다** — `countNextDayDuplicates`가 차량별 인접일 **전이**를 세므로 예약 건수는 그 2배.
 
 ### 2i. "세차 시작 오조작" 되돌리기 = 3행 세트. status만 바꾸면 재시작이 안 된다 (2026-08-07 실측)
 
@@ -536,6 +574,33 @@ GROUP BY s.detailer_id, d.name ORDER BY min_km;
 - `is_workday = 1` 필터 필수. 주간 집계는 **중앙값**(주별 편차가 크다 — 2026-07 주간 세차수 2.18~4.22대).
 - 🔑 **가동 판정식 = `daily_work_minutes − daily_total_wash_minutes` (여유분).** 2026-07-26주 실측: 근무 467분 · 세차 274분 · **여유 192분** · 세차시간 비중 58.8%. 여유의 대부분이 유휴라 **제약은 동선이 아니라 배정량(수요 밀도)**이다.
 - `LEAD` 간격은 여전히 쓸모가 있다 — 단 이름을 **"작업 간 간격"**으로 부르고 이동시간이라 부르지 말 것. 음수(기록 겹침, 20건)는 `>= 0`으로 제외.
+
+### 3f. 디테일러 일일업무(세차 준비 체크리스트·고객 연락) 완료 판정 (2026-09-01 실측)
+
+"체크리스트 했나"는 **두 소스**가 있고 뜻이 다르다. 섞으면 오판한다.
+
+| 소스 | 뜻 | 쓸 곳 |
+|---|---|---|
+| `detailer_checklist_submission` (+`_item`) | 실제 제출물. `date` = **세차일 D**, 제출은 **D-1 19~22시** | "정말 했나" 판정 |
+| `detailer_daily_task_log` | D-1 22:00 크론이 찍는 **스냅샷**(`task`=ATTENDANCE/CHECKLIST/CUSTOMER_CALL/PEER_REVIEW, `status`=COMPLETE/INCOMPLETE/NOT_APPLICABLE) | 슬랙 미완료 명단의 정본 |
+
+- 🔴 **미완료 = 행이 없다.** 작성 중이면 `submitted_at IS NULL` 행이 남고(앱이 문항별로 저장), 아예 안 열었으면 행 자체가 없다. `status` 컬럼은 submission에 없고 **파생**이다 — 제출 전=CREATED, 제출됐고 `_item.value=false`가 있으면 NEEDS_SUPPLEMENT, 전부 true면 PERFECT.
+- `date`는 DATE 컬럼이라 헬퍼 JSON이 하루 밀려 보인다 → `CAST(date AS CHAR)` (§5a).
+- **그날 근무자 분모** = `reservation` CONFIRMED + KST 변환(`DATE(DATE_ADD(reservation_datetime, INTERVAL 9 HOUR))`). 예약 없는 날은 `detailer_daily_task_log` 행도 안 생긴다 → "이번주 미완료 N회"를 셀 때 결근/무예약일을 분모에 넣지 말 것.
+- 디테일러 이름은 `detailer.name`으로 찾을 것(§3a) — `app_user` 조인은 일부 누락.
+
+```sql
+-- 특정 세차일에 체크리스트 미제출인 근무자 (= 슬랙 명단 재현)
+SELECT d.id, d.name, COUNT(DISTINCT r.id) rsv,
+       (SELECT CAST(s.submitted_at AS CHAR) FROM detailer_checklist_submission s
+         WHERE s.detailer_id = d.id AND s.date = '2026-09-02') sub
+FROM reservation r JOIN detailer d ON d.id = r.detailer_id
+WHERE DATE(DATE_ADD(r.reservation_datetime, INTERVAL 9 HOUR)) = '2026-09-02'
+  AND r.status = 'CONFIRMED'
+GROUP BY d.id HAVING sub IS NULL;
+```
+
+⚠️ **"앱에 완료라고 떴다"는 디테일러 신고는 DB로 판정할 것.** 2026-09-01까지 zero-api가 마감 후 미제출을 '해당없음'으로 분류해, 미제출자가 22:00~24:00에 앱을 열면 배너가 `완료`로 떴다(PR #1875로 prod 수정 완료). 그 이전 날짜의 신고를 조사할 때는 화면이 근거가 못 된다.
 
 ---
 
@@ -837,6 +902,8 @@ WHERE d.name != '이상민' AND d.id != 159
 
 ⚠️ **패키지 "구매 건수"를 `entitlement_package_instance` 행 수로 세면 10배가 된다.** 1행 = 1회차이므로(§6e) 10회권 1건이 10행이다. 구매 이벤트 단위는 `GROUP BY user_id, package_key, DATE_FORMAT(created_at,'%Y-%m-%d %H:%i')`(같은 사람이 회권을 두 번 살 수 있으므로 분 단위까지)로 묶고, 취소분은 `status='ACTIVE' AND deleted_at IS NULL`로 뺀다.
 
+🔴 **어드민 반얀 보드의 "판매" 행은 판매일이 아니라 *그 고객의 첫 반얀 세차일*에 붙는다 (2026-09-02 실측).** 미사용 세차권은 예약과 연결이 없어 세트별 판매일을 붙일 데이터가 없기 때문에, `GET /v1/admin/banyan/board/summary?date=`가 그 유저의 반얀 세차 `MIN(reservation_datetime)` KST 날짜로 판매 행을 귀속한다. 실사례: 9/1에 판 김의성(226015) 5·10회권이 **8/6 보드에만** 뜨고 9/1·9/2 보드엔 없다(그날의 회수 실패 신고는 별건 — 권한 403이었다). ⟹ ① `epi.created_at`으로 센 판매일과 화면의 일자별 판매 숫자는 원래 안 맞는다(누계 `promoTotal`만 일치) ② 세트 판정은 `(user_id, package_key)` 버킷을 `created_at` **60초 gap**으로 쪼갠 뒤 **유효 회차수가 정확히 5 또는 10일 때만** 행을 만든다 — 그 외(4장 남은 세트, 60초 안에 두 번 지급 등)는 화면에서 **조용히 사라진다**(서버 warn 로그만). 유효 회차 = `entitlement_package_item.item_type='SERVICE'` ∧ `user_service.service_id=137` ∧ `deleted_yn=0`.
+
 ### 5c. 유료 예약 판정
 
 **유료 예약** (프로모션 무료 제외): `user_service.paid_yn = 1` + 0원 VOUCHER 프로모션 제외:
@@ -1062,6 +1129,7 @@ JOIN reservation_draft d
 - 콜 콘솔·고객앱 예약 슬롯 = **caramel-zero `apps/api` `scheduling` 도메인의 하드코딩 상수** (`generate-time-slots.policy.ts`, zero-api `POST /v1/admin/scheduling/time-slots/query`). ⚠️ 레거시 caramel-api `time-slot.service.ts`(TARGET_TIMES 08·10·12…)는 죽은 경로 — 여기 파면 헛다리.
 - ⚠️⚠️ **반얀트리(BANYAN_TREE) 슬롯 ≠ 일반(DEFAULT) 슬롯 = 완전히 다른 시스템.**
   - **반얀트리**: 고정 상수 `SEOUL_BANYAN_TREE_SLOT_START_TIMES_UTC` → **KST 09·11·14·16·18** (반얀 주소=장충단로 60 매칭 시에만).
+  - **반얀 확장(`BANYAN_TREE_EXTENDED`)**: 고정 상수 `SEOUL_BANYAN_TREE_EXTENDED_SLOT_START_TIMES_UTC` → **KST 08·10·12·14·16·18·20** (같은 반얀 주소, 7칸). 🔴 **반얀 근무자는 최근 사실상 전원 이 타입이라, 기본 `BANYAN_TREE` 그리드(09·11·14·16·18)로 "그 시각은 원래 없는 슬롯"이라고 판정하면 뒤집힌다** — 2026-09-01 실사례: 9/4 12시 미노출의 원인은 그리드 부재가 아니라 12시를 여는 오전조 3명 전원 예약 참. ⟹ 반얀 슬롯을 판정하기 전에 **그날 유효한 스케줄의 `type`을 먼저 뽑아** 어느 그리드인지 확정할 것.
   - **현대백화점 천호(`HD_CHEONHO`)**: 고정 상수 `SEOUL_HD_CHEONHO_SLOT_START_TIMES_UTC` → **KST 10:30·12:30·14:30·16:30·18:30** (천호 주소=천호대로 1005 매칭 시에만). 2026-08 신설, 이 코드베이스 **최초의 30분 오프셋 그리드**다.
   - 🔴 **그리드는 근무창에서 파생되지 않는다 — 타입별 코드 상수다** (`slotStartTimesForWorkScheduleType()`). 근무 rule은 그중 **몇 칸이 보일지만** 정한다. ⟹ 근무창이 KST 10~21이어도 천호는 5칸이지 11칸이 아니다. **새 현장 시각이 다르면 반드시 새 상수를 추가**해야 한다.
   - 🔴 **타입 문자열이 매핑 계층에서 조용히 `DEFAULT`로 치환될 수 있다 (2026-08-26 실사고).** `prisma-detailer-schedule.repository.ts`의 `toDetailerWorkScheduleType`이 **화이트리스트**라 여기 빠진 타입은 DB에 `HD_CHEONHO`로 있어도 `DEFAULT`로 읽힌다 → **파견자는 정확히 잡히는데 슬롯 시각만 일반 그리드(정각)로 뜬다.** 그리드 함수·근무타입 판정은 각각 유닛 테스트를 통과하고 그 사이에서 값이 죽으므로 **실화면/E2E에서만 드러난다.** 현장 타입 추가 시 고칠 곳 넷: 레지스트리 / `serviceability-resolver` / `generate-time-slots.policy` / **이 화이트리스트**.
@@ -2023,6 +2091,11 @@ FROM reservation_onsite_collection roc WHERE roc.status<>'CANCELED';
   - **환불 실행 여부 정본 = `payment.status`(`PARTIAL_CANCELED`/`CANCELED`) + `cancel_amount`.** `refund-orchestrator.service.ts`가 **PG 취소 성공 뒤에만** `applyRefundBatch`를 부르고 실패하면 예외로 중단하므로, `cancel_amount`가 올라가 있으면 PG 취소는 나간 것이다.
   - ⚠️ `card_payment.cancel_amount`는 환불이 나가도 **0인 채로 남는다**(같은 실사례). 카드 원장이 아니라 `payment`를 볼 것.
   - 환불 시각 = `payment.modified_at`(**KST 저장** — `created_at`은 UTC라 같은 행에서 tz가 다르다).
+- 🔴 **키인(어드민 대리청구) 결제는 PortOne을 안 거친다 — KPN 직연동이다 (2026-09-03 실측).** 식별 = `payment.type='ADMIN_KEYIN'`(또는 `payment.external_request_id LIKE 'admin-keyin%'`). 카드 원장에선 **`pg_provider='KPN'` + `imp_pg_id IS NULL`**이 지문이다 — PortOne 경유 건은 채널 id(`porthetrive`·`porthetrive2`·`porthetrive3`·`im_thethrive`·`IMPTcarepl02`)가 반드시 채워진다.
+  - ⚠️ **`imp_uid IS NULL`로 "PortOne 미경유"를 판정하면 틀린다.** V2 경로도 전부 NULL이다(2026-06 이후 약 4,900행 중 imp_uid가 채워진 건 `tosspayments`/`im_thethrive` 21건뿐).
+  - KPN 거래번호(tid)는 **`card_payment.pg_id`**에 들어간다(`thetrive2___…`). `card_payment`에 `tid` 컬럼은 없다. 승인 식별자 `mxIssueNo`·`mxIssueDate`는 `payment.metadata`.
+  - 이 MID 거래는 포트원 대시보드·정산에 안 나온다. 집계 경로는 우리 DB 아니면 KPN 가맹점 관리페이지(`pm.firstpay.co.kr`).
+  - 2026-09 이후 정비 건은 `payment.name`이 `[카라멜] `로 시작한다(세차는 접두어 없음) — 재무 집계용 구분.
 
 ---
 
