@@ -443,6 +443,12 @@ WHERE r.id=?;
 - 셀원 명단: `WHERE cell_name='<셀장>' AND status='현직'` — zone/region으로 셀을 재구성하려 하면 누락(타 zone 셀원)+혼입(같은 zone 타 셀원)이 동시에 발생.
 - ⚠️ **`position` 화이트리스트로 셀 구성원을 뽑지 말 것.** 실측 값 분포(2026-08-17)는 `셀원` 60 · `''`(빈문자) 50 · `교육생` 21 · NULL 9 · `셀장` 8 · `팀장` 1 이라, 흔히 쓰는 `position IN ('셀장','셀원')`은 **교육생·팀장을 조용히 배제한다**(교육생은 장태훈·이순행 셀에 실재). "그 셀장의 사람 전원"이 목적이면 **같은 `cell_name`만** 걸어라. 빈문자·NULL row는 `cell_name`이 없어 어차피 안 붙는다.
 - 파견 셀(오토랩·헤이딜러·인천테슬라 등)은 region이 Z코드가 아닌 텍스트.
+- 🔴 **셀장 정본이 둘이다 (2026-09-04).** 위 `supply_sheet.position='셀장'`은 HR 로스터 기준이고, **앱·zero-api가 쓰는 셀장 권한(`/v1/detailer/me`의 `cellAdminAvailable`, 셀 스케줄 화면, 동행·컨시어지 지정)은 `cell_membership` 테이블만 본다.** 판정 = `role='LEADER' AND deleted_at IS NULL AND effective_from <= UTC_TIMESTAMP() AND (effective_to IS NULL OR effective_to > UTC_TIMESTAMP())` (from 포함·to 미포함, UTC 저장). prod에는 셀 6개(`cell.code` Z1~Z6)·멤버십 50행이 **2026-09-08 00:00 KST부터 유효**하게 들어가 있다 — 그 전엔 활성 LEADER 0이라 "앱 셀장 없음"이 정답이다. "앱에서 셀장 메뉴가 안 보인다"는 이 테이블을, "누가 셀장인가(인사)"는 supply_sheet를 봐라. 두 결과가 다르면 둘 다 맞을 수 있다.
+- ⚠️ **`cell.code` Z1~Z6은 `zone` 테이블의 Z1~Z6과 이름만 같은 다른 축**(§위 BELT 경고와 같은 함정). 셀↔존 매핑은 `zone_cell_assignment`(effective-dated, 셀당 zone 3개·공용 zone은 셀 2개)로 따라가고, `cell_name`·`region`으로 재구성하지 말 것. 셀장의 그날 동행 셀원은 `cell_accompaniment`(service_date KST, deleted_at NULL).
+
+**디테일러 로그인 정체성 = `detailer.user_id → app_user`**:
+- 디테일러앱 인증번호 발송(`POST /v1/auth/detailer/certification-code/send`)은 `detailer.deleted_yn=0 AND retired_yn=0` **AND 연결 `app_user.deleted_yn=0 AND test_yn=0`** 이어야 201. 하나라도 깨지면 앱은 "인증번호 발송에 실패했어요"라고만 보여 SMS 장애로 오해한다. **가장 흔한 원인 = 그 사람의 고객앱 탈퇴**(app_user deleted_yn=1)라 SMS 로그를 볼 필요가 없다.
+- 진단: `SELECT d.id,d.retired_yn,d.deleted_yn,d.user_id,u.deleted_yn u_del,u.test_yn FROM detailer d LEFT JOIN app_user u ON u.id=d.user_id WHERE d.phone='010...'` — 넷 다 0인 행이 없으면 로그인 불가. 복구는 같은 phone의 살아있는 app_user로 `detailer.user_id` 재연결(SQL 아니라 어드민 경로가 있으면 그쪽).
 
 두 테이블 JOIN 시 `COLLATE utf8mb4_general_ci` 필수.
 
@@ -483,6 +489,18 @@ JOIN zone z ON z.id = r.zone_id     -- ⚠️ service_zone 테이블 없음 — 
 | 11 | Z14 (경기 용인시/경기 화성시) |
 | 12 | Z16 (강동구/송파구) |
 | 13 | Z17 (경기 고양시/경기 파주시) |
+| 14~19 | CELL_SHARED P0~P5 |
+| 20 | Z1 강북서·고양 |
+| 21 | Z2 강북동·도심 |
+| 22 | Z3 서남내 |
+| 23 | Z4 서부·인천 |
+| 24 | Z5 동남 |
+| 25 | Z6 경기남부 |
+
+🔴🔴 **존 체계가 두 벌 겹쳐 있고, 좌표 하나가 항상 존 2개에 들어간다 (2026-09-04 실측).** 옛 Z-존(id 1~13, 이름 `Zn (구/구)`)과 9월 조직개편 체계(id 14~19 `CELL_SHARED Pn` + id 20~25 `Zn 지역명`)가 서울을 **각각 독립적으로 타일링**한다. `ST_Contains`는 그래서 언제나 2행을 돌려준다 — 방배동 → `5:Z5 (서초구/용산구)` + `14:CELL_SHARED P0` / 천호 → `12:Z16 (강동구/송파구)` + `24:Z5 동남` / 옥수동 → `8:Z9` + `18:CELL_SHARED P4`.
+- 🔴 **후보 탐색에 쓸 것은 새 체계(id ≥ 14)다.** 활성 DEFAULT 룰의 담당자 분포(2026-09-08 유효 기준)로 보면 새 체계는 존당 **4~6명**인데 **옛 Z-존은 전부 존당 1명**(Z1·Z3·Z5·Z6·Z7·Z9·Z12·Z16 각 1명)뿐인 잔존 껍데기다. ⟹ 옛 Z-존 id로 대체 후보를 뽑으면 **1명 나오고 그 1명이 휴무면 "후보 없음"으로 오답**한다(2026-09-04 천호 재배정에서 실제로 발생 — Z5·Z9·Z10·Z12로 7건을 찾았을 때 전원 휴무/0명이었고, 같은 좌표를 `CELL_SHARED`로 다시 찾자 후보가 나왔다).
+- ⚠️ **이름이 겹친다.** `Z5`가 id 5(`Z5 (서초구/용산구)`)와 id 24(`Z5 동남`) 둘, `Z3`·`Z6`도 마찬가지다. **사람에게 말할 때도 `zone.name`을 통째로 인용**하고 "Z5"로 줄이지 말 것.
+- ⟹ 위 §"공동구역은 `zone` 테이블에 없다"(2026-08-20)는 **더는 사실이 아니다.** 셀은 이제 `zone` 테이블 id 14~19에 폴리곤으로 들어와 있어 `ST_Contains`로 직접 판정된다. `zone6_areas.geojson`은 이 체계 이전 근사치다.
 
 ### 3c. 재배정 후보 탐색 — "이 존 외 건, 누구로 바꿀 수 있나" (2026-07-26)
 
@@ -865,7 +883,7 @@ GROUP BY에 날짜 쓸 때 반드시 KST 변환 후 사용.
 - **재실측 근거 2개.** ①`NOW()`=17:02 KST(session tz `Asia/Seoul`)일 때 `MAX(created_at)`가 `reservation`·`message`·`payment`·`user_service` **4개 테이블 전부 08:0x** = 정확히 −9h. ②`created_at` 시각 분포에서 **0–5시가 4,150/6,577 = 63.1%**(2026-05, 06·07·08월도 63~68%로 동일). 사람이 새벽에 예약을 63% 만들 리 없고, 0–5시 UTC = 09–14시 KST 업무시간이다.
 - 즉 **`+ INTERVAL 9 HOUR` 변환이 필요하다.** `DATE_FORMAT`으로 뽑은 문자열을 KST로 읽으면 9시간 어긋난다.
 - ⚠️ **이 오기가 실제로 사고를 냈다 (2026-08-06):** 티켓 러너 세션이 이 문장을 믿고 정상적인 티켓 본문(`10:38 KST`)을 `01:38 KST`로 "정정"했다. 같은 날 다른 세션은 SENS 응답의 KST `requestTime`과 19,606행 대조로 UTC임을 독립 확인했다.
-- (구 서술: "MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST라 `created_at`/`modified_at`은 KST 벽시계, 2026-07-12 실측" — 최소 2026-05 이후 데이터에선 성립하지 않는다. `modified_at`은 이번에 따로 재측정하지 않았으므로 아래 §7 "`modified_at` tz 지문" 항목은 쓰기 전에 재검증할 것.)
+- (구 서술: "MySQL `DEFAULT CURRENT_TIMESTAMP`=서버 KST라 `created_at`/`modified_at`은 KST 벽시계, 2026-07-12 실측" — 최소 2026-05 이후 데이터에선 성립하지 않는다. `modified_at`은 **KST 저장으로 재확인됐다**(2026-09-04: 대량 재배정 행의 `modified_at + 9h`가 `22:26`으로 나왔는데 조회 시각이 `15:02`였다 — 미래값이 나오면 그 컬럼은 이미 KST다. 실제 시각은 13:26). ⟹ `reservation.modified_at`에 `+9h`·`CONVERT_TZ`를 걸지 말 것.)
 - **디테일러 재배정 역추적 시그니처**: 재배정 전용 이력 테이블/로그 type은 없다. `modified_at`의 **정각 분대 = 셔플 크론이 detailer_id 변경**, 그 직후 분대(예 :51) = 사람이 어드민에서 재배정했을 개연성 (2026-07-13 임세혁 셔플 진단 실사례). 🔴 **크론 시각은 2026-07-30부로 17시 → KST 14시**(PR #515) — 지문은 `HOUR(modified_at)=14 AND MINUTE(modified_at)=0`이고, 그 이전 날짜를 조사할 때만 17시를 쓴다. `modified_at`은 **KST 저장**이라 `+9h` 하지 말 것.
   - 🔴 **단 "change_log엔 아예 안 남는다"는 반쪽 진술이다 — 두 경로를 함께 봐야 한다 (2026-07-27 예약 #79702 실측 교정).**
     - **고객이 날짜를 바꾸면서 디테일러도 바뀐 경우는 남는다**: `RESERVATION_DATETIME_CHANGED` row의 `data` JSON에 `fromDetailerId`/`toDetailerId`가 같이 실린다(#79702: 고객이 7/27→7/28 변경하며 78 이승제→88 강지성). **재배정 전용 `data.type`이 없어서 datetime 로그 안에 숨어 있다** — `data.type`으로 재배정을 찾으면 못 찾는다. `WHERE JSON_EXTRACT(data,'$.toDetailerId') IS NOT NULL`로 잡을 것.
@@ -1159,6 +1177,16 @@ JOIN reservation_draft d
 - ⚠️ **파견 상주자는 파견기간에 `type='DEFAULT'` 스케줄이 0행일 수 있다 (2026-07-27 반얀 상주 6명 전원 확인).** 즉 그 기간의 근무시간 = 파견 근무창이 유일하다. DEFAULT로 근무창을 찾아 0행이 나오면 "판정 불가"가 아니라 **파견 스케줄(`type LIKE 'BANYAN_TREE%'` 등)을 볼 신호**다. 근무외 판정 전에 그 사람이 그 주에 가진 스케줄 `type`을 먼저 전부 뽑을 것.
 
 **신규/복귀 디테일러 스케줄 생성 (활성 스케줄 0건인 경우)**
+- 🔴🔴 **반대 경우가 더 위험하다 — 파견자가 파견기간에 `DEFAULT` 스케줄을 *동시에* 들고 있을 수 있다 (2026-09-04 실사고).** 위 항목("0행일 수 있다")만 알고 있으면 파견자에게 DEFAULT가 없다고 전제하는데, 겹쳐 있으면 **셔플이 그를 일반 존 인력으로 보고 원존 예약을 꽂는다.** 실사례: 천호 파견자 정순욱187·박현규207·한수용191에게 `DEFAULT` 스케줄(id 1082·1091·1084, `CELL_SHARED` 룰)이 **9/8 00:00 KST~2099 무기한**으로 새로 생성됐는데 `HD_CHEONHO` 편성(187 ~9/10 · 207 ~9/8 · 191 9/9~9/10)이 그대로 살아 있어 기간이 겹쳤다. 그 상태로 대량 재배정이 돌자 **천호 예약 15/30건이 남에게 나가고 일반 존 예약 7건이 파견자에게 들어와** 파견지 슬롯을 물리적으로 막았다(정순욱 9/10 = 여의도 10:00·옥수동 12:00·잠원동 16:00 + 천호 10:30·12:30·16:30).
+  - **원인은 편성 화면이다.** `segment.ts`의 `SegmentWorkSite` 유니온에 `HD_CHEONHO`가 없어 편성 UI가 그 사람의 현장 편성을 **보지 못하고** DEFAULT를 새로 얹는다(`assertEditableSchedules`는 현장 편성 *편집*만 막고 새 DEFAULT *생성*은 막지 않는다).
+  - ⟹ **파견 감사 진입 쿼리는 `type` 을 필터하지 말고 그 사람의 그 기간 스케줄을 전부 펼쳐라.** `WHERE detailer_id=? AND effective_to > :from` 로 뽑아 **토막이 시간축에서 겹치는지**부터 본다. `type='HD_CHEONHO'`만 뽑으면 겹친 DEFAULT가 안 보이고, `type='DEFAULT'`만 뽑으면 파견 사실이 안 보인다.
+  - ⚠️ 겹침 판정 시 `effective_from`/`effective_to`는 **UTC 저장 + KST 하루 경계**다(`(D-1) 15:00:00` ~ `D 14:59:59`). `9/8 00:00 KST` = `2026-09-07 15:00:00`.
+  - 🔑 **관례는 "파견기간엔 DEFAULT를 비운다"이고 이건 실측으로 닫혀 있다 (2026-09-04).** 8월 반얀 파견 토막 **40개 전수에서 살아있는 DEFAULT(`effective_from <> effective_to`) 겹침이 0건 = 0%**다. 반대로 **종일 휴무로 막는 것은 관례가 아니다** — 같은 44토막 중 종일 휴무가 있는 건 36%뿐이고 내용이 전사휴무·연차·일회성 차단 요청이다. ⟹ 파견자에게 원존 예약이 새는 것을 막을 때 **휴무를 걸지 말고 DEFAULT 토막의 경계를 옮겨라.**
+  - 🔴 **현장 파견자에게 종일 휴무를 걸면 그 현장 예약이 전부 "휴무자 배정"으로 잡힌다.** 휴무충돌 감사·재배정 예외 조항은 `type LIKE 'BANYAN%'`에만 걸려 있어(위 §휴무 윈도우) **천호는 예외가 아니다.** 천호 30건에 걸면 30건이 통째로 감사·재배정 대상이 된다.
+  - 🔴🔴 **`PUT /v1/admin/scheduling/detailers/{id}/segments`는 현장 파견자에게 쓸 수 없다 (2026-09-04 `preview`로 실측).** 이 API는 `from`~`to` **창의 세그먼트를 통째로 교체**하므로, DEFAULT만 지우려고 창을 비우면 **그 창에 있는 `HD_CHEONHO` 편성까지 사라진다** → `coverProposals` 38건이 뜨고 그중 `origin:'NEW'` 15건이 **그 사람의 천호 예약 전부를 다른 디테일러로 되돌린다**(나머지 23건 `origin:'STANDING'`은 무관한 남의 예약 연쇄 — [[project_schedule_change_reservation_cover]]). 그렇다고 payload 에 천호 세그먼트를 되살릴 수도 없다: `place`가 **`zoneId` 필수(number)** 인데 천호 룰은 `zone_id=NULL`이라 `400 Invalid request body`다. ⟹ **파견 편성의 경계 이동은 `~/claude/mysql-write.sh`로 `effective_from`/`effective_to`만 UPDATE**하는 게 유일한 경로다(예약을 안 건드리니 cover 연쇄가 없다).
+    - ⚠️ 이때 `detailer_work_schedule`·`_rule`의 `created_at`/`modified_at`은 **UTC 저장**인데 컬럼 DEFAULT는 서버 tz(`Asia/Seoul`)라, INSERT에서 기본값에 맡기면 형제 행보다 **9시간 미래**로 박힌다 → `UTC_TIMESTAMP()`를 명시할 것(`reservation_status_log`와 같은 함정).
+    - 🔑 **잘라낸 꼬리를 되살리는 것을 잊지 말 것.** `effective_to`를 당겨 파견기간을 비우면 파견 종료 후가 통째로 빈다 → 그날부터 예약이 안 들어온다. 새 토막 + 룰 복제(`INSERT ... SELECT LAST_INSERT_ID(), r.* FROM ..._rule r WHERE r.schedule_id = <원본>`)까지 한 트랜잭션에 넣는다.
+  - 🔑 **겹침 여부는 어드민 API가 직접 알려준다** — `GET /v1/admin/scheduling/detailer-schedules/day?date=…`의 `fieldDeployment`(현장) × `hasNonFieldWork`(비현장 근무 보유). **`fieldDeployment != null && hasNonFieldWork == true` 가 곧 이상 신호**이고, 정상화되면 그날 `workScheduleTypes`가 현장 타입 단독 + `workZoneIds: []`가 된다. 수정 전후 검증에 이걸 쓸 것.
 - rule만으로는 안 되고 `detailer_work_schedule` 헤더부터 INSERT 필요.
 - 최근 운영 컨벤션: `slot_id = NULL`, `type = 'DEFAULT'`, description에 사유 메모.
 - rule의 start/end_time은 `'1970-01-01 HH:MM:SS'` UTC (예: 10~19시 KST = `01:00:00`~`10:00:00`), `service_region_group_id = NULL`.
