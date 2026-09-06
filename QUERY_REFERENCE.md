@@ -577,10 +577,13 @@ GROUP BY s.detailer_id, d.name ORDER BY min_km;
 
 🔴 **디테일러 귀속·`GROUP BY`는 `reservation.detailer_id`(FK)로. `technician`으로 묶지 마라** — `technician`은 디테일러 **이름 문자열**(비정규화)이고 99.9% 채워져 있어 그럴듯해 보이지만, 2026-05~07 구간에서 `COUNT(DISTINCT technician)` 74 vs `COUNT(DISTINCT detailer_id)` 75로 **동명이인이 한 명 합쳐진다.**
 
-🔴 **`technician`은 배정 이력의 화석이다 — 재배정·셔플이 `detailer_id`만 바꾸고 이 컬럼은 안 갱신한다 (2026-09-06 실측).** 미래 CONFIRMED 예약 5,027건 중 **3,234건(64.3%)** 이 `technician <> detailer.name`이다(9/7 이후 기준). 구독 배치가 만든 미래 예약은 생성 시점 담당자 이름을 그대로 물고 있고, 그 뒤 셔플·수동 재배정이 `detailer_id`만 옮긴다.
-- ⟹ **"이 디테일러 예약 뽑아줘"를 `technician`으로 하면 남의 예약이 통째로 섞인다.** 실사례: 맹주원(132)은 `detailer_id` 기준 9/7 이후 **3건**인데 `technician='맹주원'` 기준으론 **93건**이고, 그 차이 90건은 **29명의 다른 디테일러**가 담당한다. 0건이 아니라 *부풀려진* 형태라 눈에 안 띈다.
-- 담당자 조회·재배정 대상 선별·부하 계산은 전부 `detailer_id` + `JOIN detailer d`. `technician`은 "원래 누구에게 잡혔던 건인가"를 볼 때만 쓴다.
+🔴 **`technician`은 *확정된* 담당자의 이름이다 — 미래 예약에서는 `detailer.name`과 갈리는 게 정상이고, 그것이 곧 오류는 아니다 (2026-09-06 실측).** 미래 CONFIRMED 5,027건 중 3,234건(64.3%)이 `technician <> detailer.name`인데, **과거로 갈수록 0에 수렴한다**: 완료 세차 기준 8/24~9/4 1,792건 중 불일치 **3건(0.17%)**, 내일자 예약 172건 중 **0건**, 모레 62/185, 그 뒤로 계속 벌어진다. 매일 14시 셔플이 그날치를 정리하면서 `detailer_id`와 `technician`을 **같이** 갱신하기 때문이다(zero `prisma-reservation-facts.repository.ts`·`prisma-cell-reservation-swap.repository.ts`, 레거시 `careplus_task.service.ts` 전부 두 컬럼을 한 update로 쓴다).
+- ⟹ **미래 예약의 불일치는 "아직 안 굳은 배정"이지 데이터 오류가 아니다.** 고쳐 넣지 말 것.
+- ⟹ 그래도 **담당자 조회·귀속·`GROUP BY`는 `detailer_id`로 한다.** `technician`으로 뽑으면 아직 안 굳은 남의 예약이 딸려 온다 — 실사례: 맹주원(132)은 `detailer_id` 기준 9/7 이후 3건인데 `technician='맹주원'`으로는 93건이고, 그 차이 90건은 29명의 다른 디테일러 몫이다. 0건이 아니라 *부풀려진* 형태라 눈에 안 띈다.
+- ⚠️ **한 배치가 한 이름을 통째로 찍는 일이 있다**: 2026-09-04(KST) 생성분 96건이 전부 `technician='맹주원'`인데 실제 담당자는 30명이었다(같은 날 다른 이름은 전부 담당자 1명). 생성 시 배정이 한 사람에게 쏠린 뒤 재배정된 흔적으로 읽힌다 — **생성일 기준으로 세면 이런 쏠림이 드러난다.**
+- 🔴 **고객 문자 2종이 이 컬럼을 이름으로 조인한다** — D-1 18:00 내일세차 안내(`SELECT_TOMORROW_DETAILER_SCHEDULE`: `join detailer d on d.name=r.technician`, zero·레거시 양쪽 동일)와 당일 07:00 주차위치 안내(`messaging-careplus.service.ts` `sendDDayReminderMessage`: `findFirstOrThrow({where:{name: reservation.technician}})`)가 여기서 **디테일러 이름·연락처·차량번호**를 뽑아 고객에게 보낸다. 발송 시점엔 셔플이 이미 맞춰놨기 때문에 평소엔 문제가 안 되지만, **셔플이 안 돈 날·동명이인·이름 변경은 곧바로 고객에게 틀린 담당자 정보로 나간다**(`findFirstOrThrow`는 매칭 실패 시 throw). 디테일러 이름을 바꾸거나 계정을 정리할 때 이 두 경로를 먼저 볼 것.
 - ⚠️ `technician`(utf8mb4_general_ci)과 `detailer.name`(utf8mb4_unicode_ci)은 **collation이 달라 그냥 비교하면 `Illegal mix of collations` 로 죽는다** — `r.technician COLLATE utf8mb4_general_ci = d.name COLLATE utf8mb4_general_ci`.
+
 
 🔴 **이동시간을 `LEAD` 간격으로 재지 마라 — 그건 이동이 아니라 "이동 + 유휴"다 (2026-08-06 실측, 내가 틀렸던 것).**
 연속 작업의 `LEAD` 차이는 4시간 트림 후 평균 **59.7분**(n=7,333)이라 "이동이 오래 걸린다"로 읽힌다. 그런데 실제 이동거리는 **홉당 3~5km · 하루 총 7~14km**(서울 시내 15~45분)다. **간격의 대부분은 예약 슬롯 사이 빈 시간**이지 이동이 아니다. 이걸 이동으로 읽으면 "생산성 제약 = 동선"이라는 **정반대 진단**이 나온다.
@@ -1785,7 +1788,7 @@ WHERE cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르�
 | status | varchar(25) | 완료: `WASHED` / `REPORT_SENT`. `COMPLETED` 미사용 |
 | user_id | int | FK → app_user.id |
 | detailer_id | int | FK → detailer.id |
-| technician | varchar | 디테일러 **이름 문자열**(비정규화, 99.9% 채워짐). 🔴 **현재 담당자가 아니다** — 재배정·셔플 후 갱신 안 됨(미래 CONFIRMED 64%가 `detailer.name`과 불일치). 귀속·`GROUP BY`·담당자 조회는 전부 `detailer_id` → §3e |
+| technician | varchar | 디테일러 **이름 문자열**(비정규화, 99.9% 채워짐). **고객 문자(D-1·당일 07시)가 이 이름으로 디테일러를 조인한다.** 미래 예약은 배정이 안 굳어 `detailer.name`과 갈리고(64%) 셔플이 D-1에 맞춘다 — 담당자 조회·귀속·`GROUP BY`는 `detailer_id` → §3e |
 | estimated_time | int | 티어·서비스에서 나온 **산식(계획 소요분)**. 🔴 실제 소요시간 아님 — 실측은 `wash_result.created_at`→`finished_at` → §3e |
 | address_id | int | FK → user_address.id |
 | subscription_id | int | **98% NULL — 구독 여부 판단에 사용 불가** |
