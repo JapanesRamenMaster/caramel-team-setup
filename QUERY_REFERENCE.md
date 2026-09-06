@@ -577,6 +577,11 @@ GROUP BY s.detailer_id, d.name ORDER BY min_km;
 
 🔴 **디테일러 귀속·`GROUP BY`는 `reservation.detailer_id`(FK)로. `technician`으로 묶지 마라** — `technician`은 디테일러 **이름 문자열**(비정규화)이고 99.9% 채워져 있어 그럴듯해 보이지만, 2026-05~07 구간에서 `COUNT(DISTINCT technician)` 74 vs `COUNT(DISTINCT detailer_id)` 75로 **동명이인이 한 명 합쳐진다.**
 
+🔴 **`technician`은 배정 이력의 화석이다 — 재배정·셔플이 `detailer_id`만 바꾸고 이 컬럼은 안 갱신한다 (2026-09-06 실측).** 미래 CONFIRMED 예약 5,027건 중 **3,234건(64.3%)** 이 `technician <> detailer.name`이다(9/7 이후 기준). 구독 배치가 만든 미래 예약은 생성 시점 담당자 이름을 그대로 물고 있고, 그 뒤 셔플·수동 재배정이 `detailer_id`만 옮긴다.
+- ⟹ **"이 디테일러 예약 뽑아줘"를 `technician`으로 하면 남의 예약이 통째로 섞인다.** 실사례: 맹주원(132)은 `detailer_id` 기준 9/7 이후 **3건**인데 `technician='맹주원'` 기준으론 **93건**이고, 그 차이 90건은 **29명의 다른 디테일러**가 담당한다. 0건이 아니라 *부풀려진* 형태라 눈에 안 띈다.
+- 담당자 조회·재배정 대상 선별·부하 계산은 전부 `detailer_id` + `JOIN detailer d`. `technician`은 "원래 누구에게 잡혔던 건인가"를 볼 때만 쓴다.
+- ⚠️ `technician`(utf8mb4_general_ci)과 `detailer.name`(utf8mb4_unicode_ci)은 **collation이 달라 그냥 비교하면 `Illegal mix of collations` 로 죽는다** — `r.technician COLLATE utf8mb4_general_ci = d.name COLLATE utf8mb4_general_ci`.
+
 🔴 **이동시간을 `LEAD` 간격으로 재지 마라 — 그건 이동이 아니라 "이동 + 유휴"다 (2026-08-06 실측, 내가 틀렸던 것).**
 연속 작업의 `LEAD` 차이는 4시간 트림 후 평균 **59.7분**(n=7,333)이라 "이동이 오래 걸린다"로 읽힌다. 그런데 실제 이동거리는 **홉당 3~5km · 하루 총 7~14km**(서울 시내 15~45분)다. **간격의 대부분은 예약 슬롯 사이 빈 시간**이지 이동이 아니다. 이걸 이동으로 읽으면 "생산성 제약 = 동선"이라는 **정반대 진단**이 나온다.
 
@@ -1778,7 +1783,7 @@ WHERE cb.name NOT IN ('현대','기아','제네시스','KGM','KGM(쌍용)','르�
 | status | varchar(25) | 완료: `WASHED` / `REPORT_SENT`. `COMPLETED` 미사용 |
 | user_id | int | FK → app_user.id |
 | detailer_id | int | FK → detailer.id |
-| technician | varchar | 디테일러 **이름 문자열**(비정규화, 99.9% 채워짐). 🔴 귀속·`GROUP BY`는 `detailer_id`로 — 이걸로 묶으면 **동명이인이 합쳐진다** → §3e |
+| technician | varchar | 디테일러 **이름 문자열**(비정규화, 99.9% 채워짐). 🔴 **현재 담당자가 아니다** — 재배정·셔플 후 갱신 안 됨(미래 CONFIRMED 64%가 `detailer.name`과 불일치). 귀속·`GROUP BY`·담당자 조회는 전부 `detailer_id` → §3e |
 | estimated_time | int | 티어·서비스에서 나온 **산식(계획 소요분)**. 🔴 실제 소요시간 아님 — 실측은 `wash_result.created_at`→`finished_at` → §3e |
 | address_id | int | FK → user_address.id |
 | subscription_id | int | **98% NULL — 구독 여부 판단에 사용 불가** |
