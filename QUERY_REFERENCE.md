@@ -1110,6 +1110,8 @@ JOIN reservation_draft d
 - 값: `'OUTDOOR'`(야외), `'INDOOR'`(실내), **`NULL`(48k건, 미등록)**.
 - ⚠️ NULL ≠ OUTDOOR — 야외 필터 시 `= 'OUTDOOR'` 명시 필수. `!= 'INDOOR'`로 쓰면 미등록 주소가 모두 포함됨.
 - 패턴: `JOIN user_address ua ON r.address_id = ua.id WHERE ua.parking_lot_type = 'OUTDOOR'`
+- ⚠️ **"야외 고객 수"는 주소 단위 필터로 못 센다 — 한 유저가 야외 주소와 실내 주소를 함께 갖는다 (2026-09-06 실측).** OUTDOOR 주소 보유 유저 6,380명 중 987명은 INDOOR 주소도 있어서, 야외 차단(혹서기·우천)을 실제로 겪은 모수는 **OUTDOOR만 가진 유저**다. 유저 단위 집계는 `GROUP BY user_id` 뒤 `MAX(parking_lot_type='OUTDOOR')`·`MAX(parking_lot_type='INDOOR')` 두 플래그로 갈라 쓸 것. 테스터 제외(§5b)까지 걸면 야외 전용 4,084명.
+- 🔴 **혹서기 야외 세차 차단 기간은 DB에 없다 — caramel-zero 코드 상수다 (2026-09-06 확인).** 정본 = `apps/api/src/domains/reservation/domain/caramel-event.policy.ts`의 `heatSeasonOutdoorParkingEvent`(2026년분 = 6/22 00:00 - 9/7 00:00 KST). 이 기간엔 주소가 OUTDOOR면 예약 자체가 막혀서(`HEAT_SEASON_OUTDOOR_PARKING_NOT_ALLOWED`) **야외 전용 유저의 완료 세차가 월 250-350건에서 7월 14건·8월 12건으로 주저앉는다.** DB만 뒤지면 이 급락의 원인을 못 찾으니 야외 관련 시계열을 해석하기 전에 이 상수를 먼저 볼 것. 외부만 구독은 예약일이 종료일 이전이기만 해도 막히는 별도 분기가 있다. 우천 차단(`RAINY_OUTDOOR_PARKING_NOT_ALLOWED`, 강수확률 60% 이상)은 혹서기와 무관하게 상시 유효.
 
 **서비스 가능 지역 조회 (service_region)**
 - 컬럼: `sido`, `sigungu`, `dong`, `available_yn` (1=가능)
@@ -1505,6 +1507,10 @@ ROW_NUMBER() OVER (PARTITION BY r.user_id ORDER BY r.reservation_datetime, r.id)
 ```
 ⚠️ MySQL `GROUP BY <alias>`는 SELECT의 CASE alias가 아니라 원본 표현식으로 묶이는 경우가 있다 — `CASE WHEN nth>=6 THEN '6+' ... END AS nth`로 버킷팅하고 `GROUP BY nth`하면 **에러 없이 6+가 안 합쳐진 채** 결과가 나온다. 버킷은 `LEAST(nth,6)` 같은 식으로 만들고 그 식으로 GROUP BY할 것.
 
+🔴 **제품이 고객에게 말하는 "N번째 세차"는 위 분석용 회차와 기준이 다르다 (2026-09-06).** 컨시어지 케어 안내 채팅("이 차량의 3번째 세차에 동행해…")과 셀장 셀 스케줄 카드의 `· N번째`는 **차량 기준**이다 — 같은 `reservation_car.car_id`의 `status IN ('WASHED','REPORT_SENT')` 예약 수(`deleted_yn=0`, 자기 자신 제외) `+ 1`. 정본은 `apps/api/src/domains/reservation/infrastructure/persistence/concierge-care-chat-writer.ts`의 `loadConciergeCarePastWashCount`.
+- 위 `PARTITION BY user_id` + `status='WASHED'`만으로 세면 **고객이 채팅으로 받은 숫자와 다른 값**이 나온다 — 차 2대 보유(user 기준이 더 큼)와 `REPORT_SENT` 건(WASHED만 세면 더 작음) 양쪽에서 갈린다.
+- ⟹ **"고객이 본 회차와 맞춰야 하는" 질문(CS 문의·화면 대조)은 차량 기준, 코호트 분석은 고객 기준.** 어느 쪽인지 먼저 확정하고, 보고에 기준을 같이 적을 것.
+
 **사진 테이블 구조**
 세차 전/후 사진은 `wash_result_image`가 메인(신규), `reservation_image`는 구버전.
 
@@ -1528,6 +1534,10 @@ WHERE wri.deleted_yn = 0
 BEFORE/AFTER 섹션 종류:
 - 외부: `OUTSIDE_FRONT`, `OUTSIDE_DRIVER_SIDE`, `OUTSIDE_PASSENGER_SIDE`, `OUTSIDE_FRONT_GLASS`, `OUTSIDE_DRIVER_SIDE_WHEEL`
 - 내부: `INSIDE_DRIVER_SEAT`, `INSIDE_CENTER_FASCIA`
+- 컨시어지 케어(2026-09~): `CONCIERGE_CARE/CUSTOMER_CARE`(신경쓰이는 곳) · `/VEHICLE_TRAIT`(차량 특징) · `/SHOWCASE_CONTAMINATION`(전후 대비) · `/EXTERIOR_CONTAMINATION` · `/INTERIOR_CONTAMINATION`
+- 🔴 **컨시어지 케어 항목의 식별자는 `section`이 아니라 `(section, tag, index)` 3개 조합이다 (2026-09-06 실측).** 한 섹션에 항목이 여러 개 들어간다 — 내부 오염 한 섹션에 '운전석 매트'·'콘솔'·'카시트'가 각각 전/후 한 쌍씩. `tag`가 고객에게 보이는 항목 이름(디테일러 자유 입력 또는 프리셋)이고, **같은 tag가 두 번 나올 수 있어** 그때 `index`(그룹 안에서 0부터)가 구분한다. `GROUP BY section`으로 항목 수를 세면 서로 다른 항목이 한 덩어리가 된다.
+- ⚠️ **접두사가 `WOW_FLOW/` → `CONCIERGE_CARE/`로 바뀌었지만 기존 행은 마이그레이션 안 됐다** (2026-09-02 이름 통일). 2026-08 이전 건까지 세려면 `section LIKE 'WOW_FLOW/%' OR section LIKE 'CONCIERGE_CARE/%'` 둘 다 걸 것. 반대로 `CONCIERGE_CARE/FRONT_DIRTY`·`/FILM_REMOVAL_PROCESS`는 코드에만 있고 prod 행이 0건이다(실데이터는 전부 `WOW_FLOW/` 접두사).
+- 🔴 **오염 사진 5종이 다 "오늘 한 일"이 아니다.** 그날 실제로 진행하는 건 `CUSTOMER_CARE`(신경쓰는 곳) · `VEHICLE_TRAIT`(차량 특징) · `SHOWCASE_CONTAMINATION`(전/후 대비, 추가 촬영) 3종이고, `EXTERIOR_CONTAMINATION`·`INTERIOR_CONTAMINATION`은 **케어 제안용 진단 사진**(세차 전 촬영 → '케어할 오염 선택' 단계 입력)이다. 그중 무엇을 실제로 진행했는지는 **디테일러 앱 로컬(AsyncStorage)에만 있고 서버엔 없다**(`wash_result_contamination_plan` 테이블은 비어 있는 dormant 구조). → **"진행한 케어 건수"를 오염 사진 수로 세지 말 것.**
 - 🔴 **평가 컬럼(`evaluation_status`, `evaluated_at`, `evaluator`)은 가동 중이다 — "전량 PENDING·미사용"이라는 옛 서술은 폐기 (2026-08-14 실측).** Droplet 사진품질 크론이 KST 08:30에 채운다. 2026-06-17~08-13에 **11,319장** 평가됨(PASS 10,653 / WARN 590 / FAIL 76). 단 아래 셋을 안 걸면 결과가 뒤집힌다:
   - **샘플링이다. 전수가 아니다** — 디테일러당 **1예약/일**만 평가한다. "지적 없음"은 *"평가된 건 중 지적 없음"*이지 "무결점"이 아니다. 비율을 낼 때 분모를 세차 전체로 잡지 말 것.
   - **v1 평가기(~2026-06-15)는 과탐지라 반드시 컷오프** — v1은 WARN 84%(회전 오판·불가능한 기준·빈 사유). `evaluated_at >= '2026-06-17'`을 쓴다. 06-15가 아니라 **06-17**인 이유 = 크론 대상일 off-by-one 버그가 06-16에 고쳐져 그 이전 구간은 평가 대상일이 하루씩 밀려 있다.
@@ -1705,6 +1715,8 @@ CRM·트랜잭션 메시지 발송 기록 테이블.
 - 🔴 **`job_execution.status='SUCCESS'`도 "그 크론이 일했다"의 근거가 아니다 (2026-08-31 실측).** 핸들러가 내부 실패를 `warn` 로그로만 삼키면 실행은 SUCCESS로 남는다(`sweepUnjudged` 실사례 — 며칠간 아무도 못 봤다). **일했는지는 산출물 테이블에서 센다**: 그 크론이 쓰는 행의 `created_at`을 KST 시(hour)로 잘라 크론 시각대에 몇 건이 쓰였는지 본다. 예 — 20시 크론이면 `SUM(HOUR(CONVERT_TZ(created_at,'+00:00','+09:00'))=20)`. 이걸로 "SUCCESS인데 0건"과 "정상"이 갈린다.
 - 🔴 **같은 크론 이름·같은 `job_id` 를 zero-api 와 레거시 caramel-api 가 공유한다 — `job_execution` 만 보면 어느 쪽이 보냈는지 못 가른다 (2026-09-01 실측).** 발신 주체 판정 2단계: ① **`job.metrics.source`** 가 채워져 있으면 zero-api(파일 경로가 들어온다), **NULL 이면 레거시**. ② charts 레포 **`caramel-api-cron/values-prod.yaml`** 에서 그 이름을 찾는다 — `defaults.suspend: true` 라서 **항목에 `suspend: false` 가 없으면 zero 쪽은 안 돈다**(2026-09-01 기준 리마인더 중 `dMinus2WashReminder` 만 활성, `beforeWashReminder`·`dDayWashReminder`·`reservationReminder`·`parkingInfoReminder` 는 suspend). 레거시 스케줄은 데코레이터에 박혀 있다(`apps/batch/src/messaging/messaging.service.ts` 의 `@Cron(CronExpression.EVERY_DAY_AT_6PM)` 등) — `job.cron_time` 은 레거시 행에선 한글 문구("매일 20시")까지 섞인 **참고값**이라 믿을 게 아니다.
   - ⟹ **"제외 로직을 넣었는데 왜 계속 나가나"는 여기서 갈린다.** zero 코드만 읽고 "제외됨"으로 판정하지 말 것.
+  - 🔑 **이미 나간 건은 `message` 행 하나로 발신 주체가 갈린다 — charts 레포 없이 사후 판정 가능 (2026-09-07 실측).** `JSON_EXTRACT(message,'$.result.messageId')` 가 있으면 **zero-api**(신형), `JSON_EXTRACT(message,'$.response.data.msgid')` 가 있으면 **레거시 caramel-api**. 한 날짜를 `GROUP BY type` + 두 포맷 카운트로 찍으면 어느 알림이 어느 서비스에서 나갔는지 한 장에 보인다. 실사례: 9/7 `parkingInfo001` 157건 = 전부 구형(레거시), 같은 날 나머지 알림톡 13건 = 전부 신형(zero).
+  - 발송한 크론 역추적 = `message.job_execution_id` → `job_execution.job_id` → `job.name`. 대상 필터를 확인할 코드를 어느 레포에서 열지는 위 포맷 판정으로 정한다.
 - 🔴 **`job.status='ACTIVE'`는 "돌고 있다"의 근거가 아니다 (2026-08-25 실측).** 테이블명은 **`job`**(`cron_job` 아님). 살아 있는지 판정하려면 두 가지를 같이 봐라: ① `job_execution`의 최종 실행 시각(`MAX(created_at)`), ② 그 job 이름의 핸들러가 코드에 실존하는지(zero-api `cron-internal.controller.ts`의 `@Post('/<jobName>')`). 실사례 — `sendRainRetouchAvailablePush`는 status `ACTIVE`인데 컨트롤러에 엔드포인트가 없고 2026-05-26에 5회 돌고 멈춰 있었다(리터치 알림이 통째로 안 나감), `sendRainPolicyUpdatedNotifications`는 61일 연속 매일 돌다 2026-07-19에 정지.
 
 ---
